@@ -1,0 +1,70 @@
+{
+  "name": "antigravity-smart-predictor",
+  "displayName": "Antigravity 智能输入预测器 (Smart Predictor)",
+  "description": "专为 VS Code Antigravity 打造的聊天输入框智能预测与 Ghost Text 幽灵文本补全，支持 Tab 一键采纳与开发意图预判",
+  "version": "1.0.0",
+  "publisher": "antigravity-community",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/zhqin01/antigravity-smart-predictor.git"
+  },
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": [
+    "Other",
+    "AI",
+    "Productivity"
+  ],
+  "activationEvents": [
+    "onStartupFinished",
+    "onView:antigravity.panel",
+    "*"
+  ],
+  "main": "./extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "antigravity-predictor.toggle",
+        "title": "Antigravity 智能预测: 开关输入预测"
+      },
+      {
+        "command": "antigravity-predictor.clearHistory",
+        "title": "Antigravity 智能预测: 清空个性化学习词库"
+      }
+    ],
+    "configuration": {
+      "type": "object",
+      "title": "Antigravity 智能输入预测设置",
+      "properties": {
+        "antigravityPredictor.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "是否开启 Antigravity 对话框智能输入预测与 Ghost Text 补全"
+        },
+        "antigravityPredictor.debounceMs": {
+          "type": "number",
+          "default": 350,
+          "description": "打字停顿触发预测的防抖时间 (毫秒)，默认 350ms"
+        },
+        "antigravityPredictor.showTabBadge": {
+          "type": "boolean",
+          "default": true,
+          "description": "是否在预测建议末尾显示 [Tab ⇥] 采纳提示徽标"
+        },
+        "antigravityPredictor.contextAware": {
+          "type": "boolean",
+          "default": true,
+          "description": "是否结合当前编辑器打开的文件与编程语言智能调整预测推荐"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "echo 'No compilation needed for pure JS extension'"
+  },
+  "devDependencies": {
+    "@vscode/vsce": "^2.24.0"
+  }
+}
