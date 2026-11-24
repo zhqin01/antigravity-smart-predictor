@@ -2,7 +2,7 @@
   "name": "antigravity-smart-predictor",
   "displayName": "Antigravity 智能输入预测器 (Smart Predictor)",
   "description": "专为 VS Code Antigravity 打造的聊天输入框智能预测与 Ghost Text 幽灵文本补全，支持 Tab 一键采纳与开发意图预判",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "publisher": "antigravity-community",
   "repository": {
     "type": "git",

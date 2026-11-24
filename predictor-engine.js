@@ -29,6 +29,7 @@ const BASE_INTENTS = [
   { prefix: '提高可读性', suffix: '，重命名语义含糊的变量并理顺业务分支' },
 
   // 3. 编写 / 生成 / 实现类
+  { prefix: '测试', suffix: '当前功能的核心路径与各类异常边界条件' },
   { prefix: '帮我写一个', suffix: '高效且具有良好类型定义的通用工具函数' },
   { prefix: '写一个', suffix: '符合最佳实践的接口与实现代码' },
   { prefix: '实现一个', suffix: '具备容错与超时控制的异步处理方法' },
@@ -244,10 +245,20 @@ class PredictorEngine {
     // 4. 常见单字/两字动词宽泛意图兜底预判
     const singleWordFallbacks = [
       { key: '帮', suggestion: '我审查并优化当前代码，并补充详尽的注释' },
+      { key: '帮我', suggestion: '排查这段代码的报错原因，并给出最小改动且可运行的修复方案' },
+      { key: '帮忙', suggestion: '看一下这段实现的逻辑是否严谨' },
       { key: '请', suggestion: '检查当前代码逻辑是否存在问题并给出修改建议' },
+      { key: '请问', suggestion: '这段代码在执行时可能存在哪些潜在漏洞？' },
       { key: '写', suggestion: '一个符合业务逻辑的高效实现方案' },
       { key: '改', suggestion: '一下这段实现，提高运行效率与可维护性' },
-      { key: '查', suffix: '一下当前实现的报错原因与修复方案' }
+      { key: '查', suggestion: '一下当前实现的报错原因与修复方案' },
+      { key: '排查', suggestion: '当前实现的异常原因与潜在隐患，给出修复建议' },
+      { key: '测试', suggestion: '当前功能的核心路径与各类异常边界条件' },
+      { key: '优化', suggestion: '这段代码的执行效率与算法复杂度，减少冗余开销' },
+      { key: '重构', suggestion: '这个函数，提取可复用的子模块，降低圈复杂度' },
+      { key: '解释', suggestion: '这段核心代码的执行流程与关键设计思想' },
+      { key: '看看', suggestion: '这段代码有什么可以优化的地方' },
+      { key: '你好', suggestion: '，请帮我分析一下当前项目的代码结构' }
     ];
 
     for (const fb of singleWordFallbacks) {
