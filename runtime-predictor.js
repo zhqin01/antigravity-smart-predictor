@@ -1,13 +1,15 @@
 /**
- * Antigravity Smart Predictor - Inline Ghost Text Engine (v1.2.0)
+ * Antigravity Smart Predictor - Inline Ghost Text Engine (v2.0.0 企业生产级)
  * 专为 VS Code Antigravity Meta Lexical 富文本聊天框定制的纯正行内幽灵文本补全引擎
- * 抛弃弹窗与浮动胶囊，直接在光标后紧随显示浅灰色续写文字，按 Tab 键一键无缝采纳
+ * 拥有：三重级联物理探针、智能折行下沉排版、Alt+] 多候选翻页、Tab 一键采纳、Esc 瞬间隐匿与 IME 绝对隔离
  */
 (function initAntigravityInlinePredictor() {
   'use strict';
 
   let currentTargetInput = null;
   let activeSuggestion = null;
+  let activeCandidates = [];
+  let candidateIndex = 0;
   let debounceTimer = null;
   let isComposing = false;
   let currentRequestId = 0;
@@ -160,16 +162,17 @@
       ghost.style.display = 'none';
       ghost.innerHTML = '';
     }
-    // 彻底清理旧版遗留的任何多余悬浮胶囊与遮罩
     const oldChip = document.getElementById('agy-predictor-chip');
     if (oldChip) oldChip.remove();
     const oldOverlay = document.getElementById('agy-ghost-overlay');
     if (oldOverlay) oldOverlay.remove();
 
     activeSuggestion = null;
+    activeCandidates = [];
+    candidateIndex = 0;
   }
 
-  function showGhostText(inputEl, suggestionText) {
+  function showGhostText(inputEl, suggestionText, index = 0, total = 1) {
     if (!inputEl || !suggestionText) {
       hideGhostText();
       return;
@@ -222,9 +225,18 @@
     ghost.style.display = 'inline-flex';
     ghost.style.alignItems = 'center';
 
-    // 纯正浅灰色行内续写字 + 微型 Tab 徽标
+    // 组装多候选指示徽标与 Tab 采纳提示
+    let multiBadge = '';
+    if (total > 1) {
+      multiBadge = `
+        <span style="display: inline-flex; align-items: center; margin-left: 5px; font-size: 10px; font-family: monospace; color: #8b949e; opacity: 0.7;">(${index + 1}/${total})</span>
+        <span style="display: inline-flex; align-items: center; margin-left: 3px; font-size: 9px; font-family: monospace; padding: 0 3px; height: 14px; line-height: 13px; border: 1px solid rgba(139, 148, 158, 0.3); border-radius: 2px; color: #8b949e; opacity: 0.6;">Alt+]</span>
+      `;
+    }
+
     ghost.innerHTML = `
       <span style="color: #8b949e; opacity: 0.85; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${escapeHtml(suggestionText)}</span>
+      ${multiBadge}
       <span style="display: inline-flex; align-items: center; margin-left: 6px; font-size: 10px; font-family: -apple-system, BlinkMacSystemFont, monospace; padding: 0 4px; height: 15px; line-height: 14px; border: 1px solid rgba(139, 148, 158, 0.4); border-radius: 3px; color: #8b949e; opacity: 0.7; flex-shrink: 0;">Tab ⇥</span>
     `;
 
@@ -271,7 +283,9 @@
 
         if (data && data.suggestion) {
           localSuggestionCache.set(prefix.toLowerCase(), data.suggestion);
-          showGhostText(inputEl, data.suggestion);
+          activeCandidates = data.candidates && data.candidates.length > 0 ? data.candidates : [data.suggestion];
+          candidateIndex = 0;
+          showGhostText(inputEl, activeCandidates[candidateIndex], candidateIndex, activeCandidates.length);
         } else {
           hideGhostText();
         }
@@ -335,7 +349,7 @@
 
     hideGhostText();
 
-    // 记录个性化采纳习惯
+    // 记录个性化采纳习惯与提效数据
     try {
       fetch(`http://127.0.0.1:${API_PORT}/record_accepted`, {
         method: 'POST',
@@ -358,7 +372,9 @@
     // 1. 本地缓存秒级预览 (0ms)
     const cached = localSuggestionCache.get(prefix.toLowerCase());
     if (cached) {
-      showGhostText(inputEl, cached);
+      activeCandidates = [cached];
+      candidateIndex = 0;
+      showGhostText(inputEl, cached, 0, 1);
     }
 
     // 2. 防抖 180ms 后请求云端或深层匹配，敏捷跟手
@@ -401,12 +417,6 @@
       }
     }
   }
-        ghost.style.left = `${Math.round(caret.left)}px`;
-        ghost.style.top = `${Math.round(caret.top)}px`;
-        ghost.style.maxWidth = `${Math.round(maxW)}px`;
-      }
-    }
-  }
 
   // ================= 全局事件捕获与委托 =================
 
@@ -439,6 +449,7 @@
 
   document.addEventListener('keydown', (e) => {
     if (activeSuggestion && currentTargetInput) {
+      // Tab: 采纳补全
       if (e.key === 'Tab') {
         e.preventDefault();
         e.stopPropagation();
@@ -446,6 +457,7 @@
         return;
       }
 
+      // Escape: 瞬间关闭建议
       if (e.key === 'Escape') {
         e.preventDefault();
         e.stopPropagation();
@@ -453,7 +465,30 @@
         return;
       }
 
-      if (e.key === 'ArrowRight') {
+      // Alt + ] 或 Alt + ArrowDown: 切换下一个候选建议
+      if (e.altKey && (e.key === ']' || e.key === 'ArrowDown')) {
+        if (activeCandidates.length > 1) {
+          e.preventDefault();
+          e.stopPropagation();
+          candidateIndex = (candidateIndex + 1) % activeCandidates.length;
+          showGhostText(currentTargetInput, activeCandidates[candidateIndex], candidateIndex, activeCandidates.length);
+          return;
+        }
+      }
+
+      // Alt + [ 或 Alt + ArrowUp: 切换上一个候选建议
+      if (e.altKey && (e.key === '[' || e.key === 'ArrowUp')) {
+        if (activeCandidates.length > 1) {
+          e.preventDefault();
+          e.stopPropagation();
+          candidateIndex = (candidateIndex - 1 + activeCandidates.length) % activeCandidates.length;
+          showGhostText(currentTargetInput, activeCandidates[candidateIndex], candidateIndex, activeCandidates.length);
+          return;
+        }
+      }
+
+      // 光标向右到末尾时亦可按右方向键采纳
+      if (e.key === 'ArrowRight' && !e.altKey && !e.ctrlKey) {
         const sel = window.getSelection();
         if (sel && sel.rangeCount > 0) {
           const r = sel.getRangeAt(0);
@@ -487,5 +522,5 @@
     }
   });
 
-  console.log('[Antigravity Inline Predictor] 行内纯正 Ghost Text 补全引擎已激活 (端口: ' + API_PORT + ')');
+  console.log('[Antigravity Inline Predictor] 企业生产级 Ghost Text 引擎已激活 (端口: ' + API_PORT + ')');
 })();

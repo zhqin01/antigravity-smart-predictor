@@ -2,7 +2,7 @@
   "name": "antigravity-smart-predictor",
   "displayName": "Antigravity 智能输入预测器 (Smart Predictor)",
   "description": "专为 VS Code Antigravity Meta Lexical 富文本聊天框定制的纯正行内幽灵文本补全引擎，光标后紧随显示浅灰色续写文字，按 Tab 键一键采纳",
-  "version": "1.2.2",
+  "version": "1.3.0",
   "publisher": "antigravity-community",
   "repository": {
     "type": "git",
@@ -16,29 +16,49 @@
     "AI",
     "Productivity"
   ],
-  "activationEvents": [
-    "onStartupFinished",
-    "onView:antigravity.panel",
-    "*"
+  "keywords": [
+    "antigravity",
+    "predictor",
+    "copilot",
+    "ghost-text",
+    "autocomplete",
+    "deepseek",
+    "gemini",
+    "ollama"
   ],
   "main": "./extension.js",
+  "activationEvents": [
+    "*"
+  ],
   "contributes": {
     "commands": [
       {
         "command": "antigravity-predictor.menu",
-        "title": "Antigravity 智能预测: 打开设置菜单"
+        "title": "Antigravity 智能预测: 打开设置与控制菜单"
       },
       {
-        "command": "antigravity-predictor.setGeminiKey",
-        "title": "Antigravity 智能预测: 配置 Google Gemini API Key"
+        "command": "antigravity-predictor.doctor",
+        "title": "Antigravity 智能预测: 检查并自愈修复运行时注入 (Doctor)"
       },
       {
         "command": "antigravity-predictor.setDeepseekKey",
         "title": "Antigravity 智能预测: 配置 DeepSeek API Key"
       },
       {
+        "command": "antigravity-predictor.setGeminiKey",
+        "title": "Antigravity 智能预测: 配置 Google Gemini API Key"
+      },
+      {
+        "command": "antigravity-predictor.setCustomEndpoint",
+        "title": "Antigravity 智能预测: 配置通用 OpenAI / 本地端点 (Ollama / 硅基流动)"
+      },
+      {
         "command": "antigravity-predictor.switchProvider",
-        "title": "Antigravity 智能预测: 切换 AI 预测通道 (Gemini / DeepSeek)"
+        "title": "Antigravity 智能预测: 切换 AI 预测通道 (DeepSeek / Gemini / Custom)"
+      },
+      {
+        "command": "antigravity-predictor.showStats",
+        "title": "Antigravity 智能预测: 查看提效统计看板"
       },
       {
         "command": "antigravity-predictor.toggle",
@@ -60,19 +80,9 @@
         },
         "antigravityPredictor.provider": {
           "type": "string",
-          "enum": ["gemini", "deepseek"],
-          "default": "gemini",
-          "description": "选择 AI 智能预测通道：Google Gemini (推荐，可免费申请) 或 DeepSeek"
-        },
-        "antigravityPredictor.geminiApiKey": {
-          "type": "string",
-          "default": "",
-          "description": "Google Gemini API Key (可从 aistudio.google.com 免费申请)"
-        },
-        "antigravityPredictor.geminiModel": {
-          "type": "string",
-          "default": "gemini-2.5-flash",
-          "description": "Gemini 预测模型，推荐 gemini-2.5-flash 或 gemini-1.5-flash"
+          "enum": ["deepseek", "gemini", "custom"],
+          "default": "deepseek",
+          "description": "选择 AI 智能预测通道：DeepSeek (极速推荐)、Google Gemini 或通用自定义端点 (Ollama / 硅基流动 / OneAPI)"
         },
         "antigravityPredictor.deepseekApiKey": {
           "type": "string",
@@ -84,10 +94,40 @@
           "default": "deepseek-chat",
           "description": "DeepSeek 预测模型，推荐 deepseek-chat"
         },
+        "antigravityPredictor.geminiApiKey": {
+          "type": "string",
+          "default": "",
+          "description": "Google Gemini API Key (可从 aistudio.google.com 免费申请)"
+        },
+        "antigravityPredictor.geminiModel": {
+          "type": "string",
+          "default": "gemini-2.5-flash",
+          "description": "Gemini 预测模型，推荐 gemini-2.5-flash 或 gemini-1.5-flash"
+        },
+        "antigravityPredictor.customEndpoint": {
+          "type": "string",
+          "default": "http://localhost:11434/v1",
+          "description": "通用 OpenAI 兼容端点 Base URL (如 http://localhost:11434/v1 或 https://api.siliconflow.cn/v1)"
+        },
+        "antigravityPredictor.customApiKey": {
+          "type": "string",
+          "default": "",
+          "description": "通用自定义端点 API Key (本地 Ollama 可留空)"
+        },
+        "antigravityPredictor.customModel": {
+          "type": "string",
+          "default": "qwen2.5:latest",
+          "description": "通用自定义端点模型名称 (如 qwen2.5:latest, llama3.1:8b)"
+        },
+        "antigravityPredictor.enablePrivacyFilter": {
+          "type": "boolean",
+          "default": true,
+          "description": "是否开启本地隐私脱敏过滤器 (在发送到公网 API 前自动遮蔽密码、Token、私网 IP 等敏感数据)"
+        },
         "antigravityPredictor.debounceMs": {
           "type": "number",
-          "default": 350,
-          "description": "打字停顿触发预测的防抖时间 (毫秒)，默认 350ms"
+          "default": 180,
+          "description": "打字停顿触发预测的防抖时间 (毫秒)，默认 180ms"
         },
         "antigravityPredictor.showTabBadge": {
           "type": "boolean",

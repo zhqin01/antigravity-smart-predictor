@@ -4,67 +4,79 @@ const os = require('os');
 const { PredictorService } = require('./predictor-service');
 
 /**
- * 核心意图预置词库与高频编程模板
- * 针对中文编程开发者最常用的日常 Prompt 场景深度调优
+ * 核心意图预置词库与高频编程模板 (扩展覆盖全栈开发场景)
  */
 const BASE_INTENTS = [
   // 1. 排查 / Bug / 报错类
-  { prefix: '帮我排查', suffix: '这段代码的报错原因，并给出最小改动且可运行的修复方案' },
-  { prefix: '排查', suffix: '当前实现的异常原因与潜在隐患，给出修复建议' },
-  { prefix: '检查', suffix: '当前代码是否存在边界越界、空指针或未捕获的异常' },
+  { prefix: '帮我排查', suffix: '这段代码的报错原因，并给出最小改动且可运行的修复方案。' },
+  { prefix: '排查', suffix: '当前实现的异常原因与潜在隐患，给出修复建议。' },
+  { prefix: '检查', suffix: '当前代码是否存在边界越界、空指针或未捕获的异常。' },
   { prefix: '为什么', suffix: '这里会抛出异常，正确的处理方式应该是什么？' },
-  { prefix: '报了这个错', suffix: '，请帮我分析根本原因并直接输出修改后的代码' },
-  { prefix: '修复这个', suffix: 'Bug，确保向后兼容且不影响已有业务逻辑' },
-  { prefix: '定位一下', suffix: '导致这个问题的原因，并给出针对性的解决步骤' },
-  { prefix: '看看哪里有问题', suffix: '，特别是异步处理与状态同步的边界分支' },
-  { prefix: '这个报错怎么解决', suffix: '？请分析错误堆栈并提供修复步骤' },
+  { prefix: '报了这个错', suffix: '，请帮我分析根本原因并直接输出修改后的代码。' },
+  { prefix: '修复这个', suffix: 'Bug，确保向后兼容且不影响已有业务逻辑。' },
+  { prefix: '定位一下', suffix: '导致这个问题的原因，并给出针对性的解决步骤。' },
+  { prefix: '看看哪里有问题', suffix: '，特别是异步处理与状态同步的边界分支。' },
+  { prefix: '这个报错怎么解决', suffix: '？请分析错误堆栈并提供修复步骤。' },
+  { prefix: '内存泄漏', suffix: '排查：分析可能的闭包或未解绑监听器引用。' },
 
   // 2. 优化 / 重构 / 性能类
-  { prefix: '优化', suffix: '这段代码的执行效率与算法复杂度，减少冗余开销' },
-  { prefix: '帮我优化', suffix: '这个实现的执行性能，并保持外部调用方式不变' },
-  { prefix: '重构', suffix: '这个函数，提取可复用的子模块，降低圈复杂度' },
-  { prefix: '简化', suffix: '这段逻辑，遵循 YAGNI 原则，去掉过度设计' },
-  { prefix: '把这段代码重构', suffix: '为结构更清晰、易读易维护的现代写法' },
-  { prefix: '提速', suffix: '这个处理流程，考虑使用批处理或并行机制优化' },
-  { prefix: '消除重复', suffix: '代码，抽象出通用的工具辅助函数' },
-  { prefix: '提高可读性', suffix: '，重命名语义含糊的变量并理顺业务分支' },
+  { prefix: '优化', suffix: '这段代码的执行效率与算法复杂度，减少冗余开销。' },
+  { prefix: '帮我优化', suffix: '这个实现的执行性能，并保持外部调用方式不变。' },
+  { prefix: '重构', suffix: '这个函数，提取可复用的子模块，降低圈复杂度。' },
+  { prefix: '简化', suffix: '这段逻辑，遵循 YAGNI 原则，去掉过度设计。' },
+  { prefix: '把这段代码重构', suffix: '为结构更清晰、易读易维护的现代写法。' },
+  { prefix: '提速', suffix: '这个处理流程，考虑使用批处理或并行机制优化。' },
+  { prefix: '消除重复', suffix: '代码，抽象出通用的工具辅助函数。' },
+  { prefix: '提高可读性', suffix: '，重命名语义含糊的变量并理顺业务分支。' },
 
   // 3. 编写 / 生成 / 实现类
-  { prefix: '测试', suffix: '当前功能的核心路径与各类异常边界条件' },
-  { prefix: '帮我写一个', suffix: '高效且具有良好类型定义的通用工具函数' },
-  { prefix: '写一个', suffix: '符合最佳实践的接口与实现代码' },
-  { prefix: '实现一个', suffix: '具备容错与超时控制的异步处理方法' },
-  { prefix: '生成', suffix: '对应的完整实现代码，包含必要的输入参数校验' },
-  { prefix: '为这个文件', suffix: '补充完善的单元测试用例，覆盖正常与异常分支' },
-  { prefix: '编写单元测试', suffix: '，使用常用断言库覆盖各类边界条件' },
-  { prefix: '写测试用例', suffix: '，确保核心业务逻辑测试覆盖率达标' },
-  { prefix: '加一个', suffix: '防抖与节流控制，防止重复触发请求' },
-  { prefix: '添加异常捕获', suffix: '与错误恢复逻辑，避免未捕获异常导致崩溃' },
+  { prefix: '测试', suffix: '当前功能的核心路径与各类异常边界条件。' },
+  { prefix: '帮我写一个', suffix: '高效且具有良好类型定义的通用工具函数。' },
+  { prefix: '写一个', suffix: '符合最佳实践的接口与实现代码。' },
+  { prefix: '实现一个', suffix: '具备容错与超时控制的异步处理方法。' },
+  { prefix: '生成', suffix: '对应的完整实现代码，包含必要的输入参数校验。' },
+  { prefix: '为这个文件', suffix: '补充完善的单元测试用例，覆盖正常与异常分支。' },
+  { prefix: '编写单元测试', suffix: '，使用常用断言库覆盖各类边界条件。' },
+  { prefix: '写测试用例', suffix: '，确保核心业务逻辑测试覆盖率达标。' },
+  { prefix: '加一个', suffix: '防抖与节流控制，防止重复触发请求。' },
+  { prefix: '添加异常捕获', suffix: '与错误恢复逻辑，避免未捕获异常导致崩溃。' },
 
   // 4. 解释 / 审查 / 梳理类
-  { prefix: '解释一下', suffix: '这段核心代码的执行流程与关键设计思想' },
-  { prefix: '帮我解释', suffix: '这个函数的工作机制与每一步的输入输出' },
-  { prefix: '分析一下', suffix: '当前架构方案的优缺点，以及是否存在扩展瓶颈' },
-  { prefix: '审查代码', suffix: '，从安全性、性能、可维护性三个维度给出评审意见' },
-  { prefix: 'Code Review', suffix: '：检查当前修改是否有代码坏味道或潜在缺陷' },
-  { prefix: '梳理一下', suffix: '整个数据流转链路与状态变更的触发时机' },
-  { prefix: '看看这段逻辑', suffix: '是否合理，有没有考虑不周全的边缘边界' },
+  { prefix: '解释一下', suffix: '这段核心代码的执行流程与关键设计思想。' },
+  { prefix: '帮我解释', suffix: '这个函数的工作机制与每一步的输入输出。' },
+  { prefix: '分析一下', suffix: '当前架构方案的优缺点，以及是否存在扩展瓶颈。' },
+  { prefix: '审查代码', suffix: '，从安全性、性能、可维护性三个维度给出评审意见。' },
+  { prefix: 'Code Review', suffix: '：检查当前修改是否有代码坏味道或潜在缺陷。' },
+  { prefix: '梳理一下', suffix: '整个数据流转链路与状态变更的触发时机。' },
+  { prefix: '看看这段逻辑', suffix: '是否合理，有没有考虑不周全的边缘边界。' },
 
-  // 5. 文档 / 注释 / Git 工作流
-  { prefix: '给这段代码', suffix: '添加清晰详尽的中文函数注释与参数说明' },
-  { prefix: '补充注释', suffix: '，特别是复杂算法与业务特殊规则处' },
-  { prefix: '写一个 commit', suffix: ' 提交信息，遵循 Conventional Commits 规范' },
-  { prefix: '生成 git commit', suffix: ' 说明，准确概括本次修改的核心改动点' },
-  { prefix: '总结一下', suffix: '当前完成的工作要点，列出待办事项与风险项' },
-  { prefix: '写一份使用说明', suffix: '，包含 API 签名、参数解释与调用示例代码' },
-  { prefix: '生成接口文档', suffix: '，标明各请求字段、类型与示例返回值' },
+  // 5. 前端 / 页面 / 样式类
+  { prefix: '修改样式', suffix: '，使整体配色符合深色现代设计规范，保证排版间距合理。' },
+  { prefix: '响应式适配', suffix: '，确保页面在移动端、平板与桌面端均能自适应展示。' },
+  { prefix: '居中对齐', suffix: '，使用 Flexbox 或 Grid 布局实现水平垂直自适应居中。' },
+  { prefix: '页面滚动条', suffix: '样式美化，同时排查由于高度塌陷导致的异常滚动条。' },
 
-  // 6. 常用系统与快捷指令
-  { prefix: '/compact', suffix: ' 压缩当前会话上下文，释放可用空间' },
-  { prefix: '压缩会话', suffix: '，清理冗余输出日志并保留核心任务记忆' },
-  { prefix: '继续', suffix: '完成上一阶段未完工的部分' },
-  { prefix: '就按你说的办', suffix: '，请直接开始执行并修改相应代码文件' },
-  { prefix: '打包', suffix: '这个项目并生成最终可交付的发行文件' }
+  // 6. 接口 / 后端 / 数据库类
+  { prefix: '设计一个接口', suffix: '，包含请求参数验证、鉴权拦截与标准 JSON 响应结构。' },
+  { prefix: '优化 SQL', suffix: '查询语句，分析执行计划并给出索引建立建议。' },
+  { prefix: '事务控制', suffix: '，确保在多表批量更新失败时能够完整回滚数据。' },
+  { prefix: '防止重复提交', suffix: '，在服务端增加基于分布式锁或 Token 的防重机制。' },
+
+  // 7. 文档 / 注释 / Git 工作流
+  { prefix: '给这段代码', suffix: '添加清晰详尽的中文函数注释与参数说明。' },
+  { prefix: '补充注释', suffix: '，特别是复杂算法与业务特殊规则处。' },
+  { prefix: '写一个 commit', suffix: ' 提交信息，遵循 Conventional Commits 规范。' },
+  { prefix: '生成 git commit', suffix: ' 说明，准确概括本次修改的核心改动点。' },
+  { prefix: '总结一下', suffix: '当前完成的工作要点，列出待办事项与风险项。' },
+  { prefix: '写一份使用说明', suffix: '，包含 API 签名、参数解释与调用示例代码。' },
+  { prefix: '生成接口文档', suffix: '，标明各请求字段、类型与示例返回值。' },
+
+  // 8. 常用系统与快捷指令
+  { prefix: '/compact', suffix: ' 压缩当前会话上下文，释放可用空间。' },
+  { prefix: '压缩会话', suffix: '，清理冗余输出日志并保留核心任务记忆。' },
+  { prefix: '继续', suffix: '完成上一阶段未完工的部分。' },
+  { prefix: '就按你说的办', suffix: '，请直接开始执行并修改相应代码文件。' },
+  { prefix: '打包', suffix: '这个项目并生成最终可交付的发行文件。' }
 ];
 
 /**
@@ -72,26 +84,26 @@ const BASE_INTENTS = [
  */
 const CONTEXT_TEMPLATES = {
   html: [
-    { prefix: '优化', suffix: '页面在移动端与不同屏幕尺寸下的响应式自适应布局' },
-    { prefix: '修改样式', suffix: '，保证色彩搭配现代简约且排版无遮挡' },
-    { prefix: '排查', suffix: '页面滚动条或容器溢出导致的内容截断问题' }
+    { prefix: '优化', suffix: '页面在移动端与不同屏幕尺寸下的响应式自适应布局。' },
+    { prefix: '修改样式', suffix: '，保证色彩搭配现代简约且排版无遮挡。' },
+    { prefix: '排查', suffix: '页面滚动条或容器溢出导致的内容截断问题。' }
   ],
   css: [
-    { prefix: '优化', suffix: 'Flexbox 与 Grid 布局，确保各分辨率下的弹性自适应' },
-    { prefix: '调整样式', suffix: '，添加平滑的过渡动效与 Hover 微交互' }
+    { prefix: '优化', suffix: 'Flexbox 与 Grid 布局，确保各分辨率下的弹性自适应。' },
+    { prefix: '调整样式', suffix: '，添加平滑的过渡动效与 Hover 微交互。' }
   ],
   typescript: [
-    { prefix: '添加类型', suffix: '定义，使用严谨的 Interface 与泛型约束消除 any' },
-    { prefix: '重构为', suffix: '更具类型安全的泛型函数，并导出对应的 Type 定义' },
-    { prefix: '排查类型报错', suffix: '，修复类型不匹配与可能的 undefined 访问' }
+    { prefix: '添加类型', suffix: '定义，使用严谨的 Interface 与泛型约束消除 any。' },
+    { prefix: '重构为', suffix: '更具类型安全的泛型函数，并导出对应的 Type 定义。' },
+    { prefix: '排查类型报错', suffix: '，修复类型不匹配与可能的 undefined 访问。' }
   ],
   javascript: [
-    { prefix: '改写为', suffix: '现代 ES6+ 语法，使用 async/await 替换回调与 Promise 链' },
-    { prefix: '优化内存', suffix: '占用，避免闭包泄漏与未解绑的事件监听器' }
+    { prefix: '改写为', suffix: '现代 ES6+ 语法，使用 async/await 替换回调与 Promise 链。' },
+    { prefix: '优化内存', suffix: '占用，避免闭包泄漏与未解绑的事件监听器。' }
   ],
   python: [
-    { prefix: '添加', suffix: '清晰的 Type Hints 类型提示与规范的 Docstring' },
-    { prefix: '优化性能', suffix: '，使用列表推导式或内置函数替换冗余循环' }
+    { prefix: '添加', suffix: '清晰的 Type Hints 类型提示与规范的 Docstring。' },
+    { prefix: '优化性能', suffix: '，使用列表推导式或内置函数替换冗余循环。' }
   ]
 };
 
@@ -100,9 +112,17 @@ class PredictorEngine {
     this.service = new PredictorService();
     this.storageDir = path.join(os.homedir(), '.gemini', 'antigravity', 'smart_predictor');
     this.historyFile = path.join(this.storageDir, 'user_habits.json');
+    this.statsFile = path.join(this.storageDir, 'stats.json');
     this.userHabits = new Map();
+    this.stats = {
+      totalShown: 0,
+      totalAccepted: 0,
+      keystrokesSaved: 0,
+      firstUsedAt: new Date().toISOString()
+    };
     this.ensureStorage();
     this.loadUserHabits();
+    this.loadStats();
   }
 
   ensureStorage() {
@@ -118,15 +138,67 @@ class PredictorEngine {
       if (fs.existsSync(this.historyFile)) {
         const data = JSON.parse(fs.readFileSync(this.historyFile, 'utf8'));
         if (Array.isArray(data)) {
+          let dirty = false;
           for (const item of data) {
             if (item.prefix && item.suffix) {
-              const key = item.prefix.trim().toLowerCase();
-              this.userHabits.set(key, { suffix: item.suffix, count: item.count || 1 });
+              const cleanedSuffix = this.service.cleanSuggestion(item.suffix, item.prefix);
+              if (cleanedSuffix) {
+                const key = item.prefix.trim().toLowerCase();
+                this.userHabits.set(key, { suffix: cleanedSuffix, count: item.count || 1 });
+              } else {
+                dirty = true;
+              }
             }
+          }
+          if (dirty) {
+            this.saveHabits();
           }
         }
       }
     } catch (e) {}
+  }
+
+  saveHabits() {
+    try {
+      const list = [];
+      for (const [k, v] of this.userHabits.entries()) {
+        list.push({ prefix: k, suffix: v.suffix, count: v.count });
+      }
+      list.sort((a, b) => b.count - a.count);
+      fs.writeFileSync(this.historyFile, JSON.stringify(list.slice(0, 200), null, 2), 'utf8');
+    } catch (e) {}
+  }
+
+  loadStats() {
+    try {
+      if (fs.existsSync(this.statsFile)) {
+        this.stats = { ...this.stats, ...JSON.parse(fs.readFileSync(this.statsFile, 'utf8')) };
+      }
+    } catch (e) {}
+  }
+
+  recordStats(type, data = {}) {
+    try {
+      if (type === 'shown') {
+        this.stats.totalShown = (this.stats.totalShown || 0) + 1;
+      } else if (type === 'accepted') {
+        this.stats.totalAccepted = (this.stats.totalAccepted || 0) + 1;
+        this.stats.keystrokesSaved = (this.stats.keystrokesSaved || 0) + (data.length || 10);
+      }
+      fs.writeFileSync(this.statsFile, JSON.stringify(this.stats, null, 2), 'utf8');
+    } catch (e) {}
+  }
+
+  getStatsSummary() {
+    const shown = this.stats.totalShown || 0;
+    const accepted = this.stats.totalAccepted || 0;
+    const rate = shown > 0 ? ((accepted / shown) * 100).toFixed(1) : '0.0';
+    return {
+      shown,
+      accepted,
+      saved: this.stats.keystrokesSaved || 0,
+      rate: `${rate}%`
+    };
   }
 
   recordAccepted(prefix, suffix) {
@@ -140,7 +212,6 @@ class PredictorEngine {
         this.userHabits.set(p, { suffix, count: 1 });
       }
 
-      // 持久化保存前 200 条高频短语
       const list = [];
       for (const [k, v] of this.userHabits.entries()) {
         list.push({ prefix: k, suffix: v.suffix, count: v.count });
@@ -160,6 +231,23 @@ class PredictorEngine {
   }
 
   /**
+   * 本地敏感信息脱敏过滤器 (保护密钥、Token、私网 IP、密码等不泄漏给外部公网 API)
+   */
+  redactSensitiveInfo(text) {
+    if (!text) return text;
+    let s = text;
+    s = s.replace(/sk-[a-zA-Z0-9]{20,}/g, 'sk-***');
+    s = s.replace(/AIzaSy[a-zA-Z0-9_-]{30,}/g, 'AIzaSy***');
+    s = s.replace(/ghp_[a-zA-Z0-9]{30,}/g, 'ghp_***');
+    s = s.replace(/Bearer\s+[a-zA-Z0-9_\-\.]{20,}/gi, 'Bearer ***');
+    s = s.replace(/ey[a-zA-Z0-9_\-]{15,}\.ey[a-zA-Z0-9_\-]{15,}\.[a-zA-Z0-9_\-]+/g, 'jwt.***');
+    s = s.replace(/\b192\.168\.\d{1,3}\.\d{1,3}\b/g, '192.168.*.*');
+    s = s.replace(/\b10\.\d{1,3}\.\d{1,3}\.\d{1,3}\b/g, '10.*.*.*');
+    s = s.replace(/\b172\.(1[6-9]|2[0-9]|3[0-1])\.\d{1,3}\.\d{1,3}\b/g, '172.*.*.*');
+    return s;
+  }
+
+  /**
    * 智能预测匹配核心逻辑：优先云端 AI 续写，强力保障本地意图树与 429 熔断无缝降级
    */
   async predict(rawInput, context = {}, aiConfig = {}) {
@@ -168,7 +256,8 @@ class PredictorEngine {
     if (input.length === 0) return null;
 
     const hasKey = (aiConfig.provider === 'gemini' && !!aiConfig.geminiApiKey) ||
-                   (aiConfig.provider === 'deepseek' && !!aiConfig.deepseekApiKey);
+                   (aiConfig.provider === 'deepseek' && !!aiConfig.deepseekApiKey) ||
+                   (aiConfig.provider === 'custom' && !!aiConfig.customEndpoint);
 
     // 0. 本地规则预计算 (0ms)
     const localResult = this.predictLocal(input, context);
@@ -177,19 +266,22 @@ class PredictorEngine {
     if (localResult && localResult.source === 'history') {
       return {
         ...localResult,
+        candidates: [localResult.suggestion],
         hasKey: !!hasKey
       };
     }
 
-    // 1. 若配置了 Key，调用云端快速模型（DeepSeek / Gemini）实现真正智能思考续写
+    // 1. 若配置了 Key，调用云端快速模型（DeepSeek / Gemini / Custom）实现真正智能思考续写
     if (hasKey) {
       try {
-        const aiSuggestion = await this.service.predictWithAI(input, aiConfig);
-        if (aiSuggestion) {
+        const payloadInput = aiConfig.enablePrivacyFilter ? this.redactSensitiveInfo(input) : input;
+        const aiResult = await this.service.predictWithAI(payloadInput, aiConfig, context);
+        if (aiResult && aiResult.suggestion) {
           return {
             prefix: input,
-            suggestion: aiSuggestion,
-            fullText: input + aiSuggestion,
+            suggestion: aiResult.suggestion,
+            candidates: aiResult.candidates || [aiResult.suggestion],
+            fullText: input + aiResult.suggestion,
             source: 'ai-' + aiConfig.provider,
             provider: aiConfig.provider,
             hasKey: true
@@ -202,6 +294,7 @@ class PredictorEngine {
     if (localResult) {
       return {
         ...localResult,
+        candidates: [localResult.suggestion],
         hasKey: !!hasKey
       };
     }
@@ -209,15 +302,16 @@ class PredictorEngine {
     return {
       prefix: input,
       suggestion: null,
+      candidates: [],
       hasKey: !!hasKey,
-      provider: aiConfig.provider || 'gemini'
+      provider: aiConfig.provider || 'deepseek'
     };
   }
 
   predictLocal(input, context = {}) {
     const lowerInput = input.toLowerCase();
 
-    // 1. 优先度最高：用户历史采纳过的个性化短语 (精确匹配或最长前缀匹配)
+    // 1. 优先度最高：用户历史采纳过的个性化短语
     for (const [p, item] of this.userHabits.entries()) {
       if (lowerInput === p || (lowerInput.startsWith(p) && lowerInput.length - p.length < 4)) {
         return {
@@ -251,7 +345,6 @@ class PredictorEngine {
 
     for (const item of BASE_INTENTS) {
       const p = item.prefix;
-      // 场景 A: 输入与预置前缀完全相同
       if (input === p) {
         return {
           prefix: input,
@@ -261,7 +354,6 @@ class PredictorEngine {
         };
       }
 
-      // 场景 B: 预置前缀以用户输入为开头 (例如用户只打了 "帮我排" -> 补全 "查" + suffix)
       if (p.startsWith(input) && input.length >= 2) {
         const remainingPrefix = p.substring(input.length);
         const fullSuggestion = remainingPrefix + item.suffix;
@@ -273,7 +365,6 @@ class PredictorEngine {
         };
       }
 
-      // 场景 C: 用户输入的末尾包含某个核心动作前缀 (例如 "我想让你帮我排查")
       if (input.endsWith(p) && p.length > maxMatchLen) {
         maxMatchLen = p.length;
         bestMatch = {
@@ -284,7 +375,6 @@ class PredictorEngine {
         };
       }
 
-      // 场景 D: 用户输入以核心意图动词开头 (例如 "测试一下这段代码", "优化这个组件")
       if (input.startsWith(p) && p.length > maxMatchLen) {
         maxMatchLen = p.length;
         let s = item.suffix;
@@ -306,35 +396,35 @@ class PredictorEngine {
 
     // 4. 常见动词高频兜底模糊预测 (保证即使断网或云端429限流时，输入框依然100%出现灰色续写)
     const singleWordFallbacks = [
-      { key: '帮我排查', suggestion: '这段代码的报错原因，并给出最小改动且可运行的修复方案' },
-      { key: '排查', suggestion: '当前实现的异常原因与潜在隐患，给出修复建议' },
-      { key: '帮我优化', suggestion: '这段代码的执行效率与算法复杂度，减少冗余开销' },
-      { key: '优化', suggestion: '这段代码的执行性能，并保持外部调用方式不变' },
-      { key: '重构', suggestion: '这个函数，提取可复用的子模块，降低圈复杂度' },
-      { key: '测试', suggestion: '当前功能的核心路径与各类异常边界条件' },
-      { key: '写一个', suggestion: '符合最佳实践的通用工具函数' },
-      { key: '实现一个', suggestion: '具备容错与超时控制的异步处理方法' },
-      { key: '帮我看看', suggestion: '这段实现的逻辑是否严谨，有没有考虑不周全的边缘边界' },
-      { key: '看看', suggestion: '这段代码有什么可以优化的地方' },
-      { key: '检查', suggestion: '当前代码是否存在边界越界、空指针或未捕获的异常' },
-      { key: '请解释', suggestion: '这段核心代码的执行流程与关键设计思想' },
-      { key: '解释', suggestion: '这段核心代码的执行流程与关键设计思想' },
-      { key: '改一下', suggestion: '这段实现，提高运行效率与可维护性' },
-      { key: '修改', suggestion: '这段逻辑，遵循 YAGNI 原则，去掉过度设计' },
+      { key: '帮我排查', suggestion: '这段代码的报错原因，并给出最小改动且可运行的修复方案。' },
+      { key: '排查', suggestion: '当前实现的异常原因与潜在隐患，给出修复建议。' },
+      { key: '帮我优化', suggestion: '这段代码的执行效率与算法复杂度，减少冗余开销。' },
+      { key: '优化', suggestion: '这段代码的执行性能，并保持外部调用方式不变。' },
+      { key: '重构', suggestion: '这个函数，提取可复用的子模块，降低圈复杂度。' },
+      { key: '测试', suggestion: '当前功能的核心路径与各类异常边界条件。' },
+      { key: '写一个', suggestion: '符合最佳实践的通用工具函数。' },
+      { key: '实现一个', suggestion: '具备容错与超时控制的异步处理方法。' },
+      { key: '帮我看看', suggestion: '这段实现的逻辑是否严谨，有没有考虑不周全的边缘边界。' },
+      { key: '看看', suggestion: '这段代码有什么可以优化或重构的地方。' },
+      { key: '检查', suggestion: '当前代码是否存在边界越界、空指针或未捕获的异常。' },
+      { key: '请解释', suggestion: '这段核心代码的执行流程与关键设计思想。' },
+      { key: '解释', suggestion: '这段核心代码的执行流程与关键设计思想。' },
+      { key: '改一下', suggestion: '这段实现，提高运行效率与可维护性。' },
+      { key: '修改', suggestion: '这段逻辑，遵循 YAGNI 原则，去掉过度设计。' },
       { key: '为什么', suggestion: '这里会抛出异常，正确的处理方式应该是什么？' },
-      { key: '帮我', suggestion: '审查并优化当前代码，并补充详尽的注释' },
-      { key: '帮忙', suggestion: '看一下这段实现的逻辑是否严谨' },
-      { key: '插件', suggestion: '列表，分析哪些是可以清理或停用的' },
-      { key: '怎么', suggestion: '写一个健壮且高效的实现方案' },
-      { key: '如何', suggestion: '在当前代码架构下优雅地实现这个功能' },
-      { key: '我想', suggestion: '实现一个具备容错控制的业务模块' },
-      { key: '能否', suggestion: '帮我检查一下当前代码的潜在隐患' },
-      { key: '哪些', suggestion: '地方存在性能瓶颈或内存泄漏隐患' },
-      { key: '这个', suggestion: '实现的逻辑是否合理，有没有边界未覆盖' },
-      { key: '请', suggestion: '检查当前代码逻辑是否存在问题并给出修改建议' },
-      { key: '写', suggestion: '一个符合业务逻辑的高效实现方案' },
-      { key: '查', suggestion: '一下当前实现的报错原因与修复方案' },
-      { key: '你好', suggestion: '，请帮我分析一下当前项目的代码结构' }
+      { key: '帮我', suggestion: '审查并优化当前代码，并补充详尽的注释。' },
+      { key: '帮忙', suggestion: '看一下这段实现的逻辑是否严谨。' },
+      { key: '插件', suggestion: '列表，分析哪些是可以清理或停用的。' },
+      { key: '怎么', suggestion: '写一个健壮且高效的实现方案。' },
+      { key: '如何', suggestion: '在当前代码架构下优雅地实现这个功能。' },
+      { key: '我想', suggestion: '实现一个具备容错控制的业务模块。' },
+      { key: '能否', suggestion: '帮我检查一下当前代码的潜在隐患。' },
+      { key: '哪些', suggestion: '地方存在性能瓶颈或内存泄漏隐患。' },
+      { key: '这个', suggestion: '实现的逻辑是否合理，有没有边界未覆盖。' },
+      { key: '请', suggestion: '检查当前代码逻辑是否存在问题并给出修改建议。' },
+      { key: '写', suggestion: '一个符合业务逻辑的高效实现方案。' },
+      { key: '查', suggestion: '一下当前实现的报错原因与修复方案。' },
+      { key: '你好', suggestion: '，请帮我分析一下当前项目的代码结构。' }
     ];
 
     for (const fb of singleWordFallbacks) {
