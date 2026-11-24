@@ -283,37 +283,64 @@ class PredictorEngine {
           source: 'intent'
         };
       }
+
+      // 场景 D: 用户输入以核心意图动词开头 (例如 "测试一下这段代码", "优化这个组件")
+      if (input.startsWith(p) && p.length > maxMatchLen) {
+        maxMatchLen = p.length;
+        let s = item.suffix;
+        if (input.endsWith('代码') && s.startsWith('代码')) s = s.substring(2);
+        if (input.endsWith('代码') && s.startsWith('这段代码')) s = s.substring(4);
+        if (input.endsWith('函数') && s.startsWith('这个函数')) s = s.substring(4);
+        bestMatch = {
+          prefix: input,
+          suggestion: s,
+          fullText: input + s,
+          source: 'intent'
+        };
+      }
     }
 
     if (bestMatch) {
       return bestMatch;
     }
 
-    // 4. 常见单字/两字动词宽泛意图兜底预判
+    // 4. 常见动词高频兜底模糊预测 (保证即使断网或云端429限流时，输入框依然100%出现灰色续写)
     const singleWordFallbacks = [
-      { key: '帮', suggestion: '我审查并优化当前代码，并补充详尽的注释' },
-      { key: '帮我', suggestion: '排查这段代码的报错原因，并给出最小改动且可运行的修复方案' },
+      { key: '帮我排查', suggestion: '这段代码的报错原因，并给出最小改动且可运行的修复方案' },
+      { key: '排查', suggestion: '当前实现的异常原因与潜在隐患，给出修复建议' },
+      { key: '帮我优化', suggestion: '这段代码的执行效率与算法复杂度，减少冗余开销' },
+      { key: '优化', suggestion: '这段代码的执行性能，并保持外部调用方式不变' },
+      { key: '重构', suggestion: '这个函数，提取可复用的子模块，降低圈复杂度' },
+      { key: '测试', suggestion: '当前功能的核心路径与各类异常边界条件' },
+      { key: '写一个', suggestion: '符合最佳实践的通用工具函数' },
+      { key: '实现一个', suggestion: '具备容错与超时控制的异步处理方法' },
+      { key: '帮我看看', suggestion: '这段实现的逻辑是否严谨，有没有考虑不周全的边缘边界' },
+      { key: '看看', suggestion: '这段代码有什么可以优化的地方' },
+      { key: '检查', suggestion: '当前代码是否存在边界越界、空指针或未捕获的异常' },
+      { key: '请解释', suggestion: '这段核心代码的执行流程与关键设计思想' },
+      { key: '解释', suggestion: '这段核心代码的执行流程与关键设计思想' },
+      { key: '改一下', suggestion: '这段实现，提高运行效率与可维护性' },
+      { key: '修改', suggestion: '这段逻辑，遵循 YAGNI 原则，去掉过度设计' },
+      { key: '为什么', suggestion: '这里会抛出异常，正确的处理方式应该是什么？' },
+      { key: '帮我', suggestion: '审查并优化当前代码，并补充详尽的注释' },
       { key: '帮忙', suggestion: '看一下这段实现的逻辑是否严谨' },
       { key: '请', suggestion: '检查当前代码逻辑是否存在问题并给出修改建议' },
-      { key: '请问', suggestion: '这段代码在执行时可能存在哪些潜在漏洞？' },
       { key: '写', suggestion: '一个符合业务逻辑的高效实现方案' },
-      { key: '改', suggestion: '一下这段实现，提高运行效率与可维护性' },
       { key: '查', suggestion: '一下当前实现的报错原因与修复方案' },
-      { key: '排查', suggestion: '当前实现的异常原因与潜在隐患，给出修复建议' },
-      { key: '测试', suggestion: '当前功能的核心路径与各类异常边界条件' },
-      { key: '优化', suggestion: '这段代码的执行效率与算法复杂度，减少冗余开销' },
-      { key: '重构', suggestion: '这个函数，提取可复用的子模块，降低圈复杂度' },
-      { key: '解释', suggestion: '这段核心代码的执行流程与关键设计思想' },
-      { key: '看看', suggestion: '这段代码有什么可以优化的地方' },
       { key: '你好', suggestion: '，请帮我分析一下当前项目的代码结构' }
     ];
 
     for (const fb of singleWordFallbacks) {
-      if (input === fb.key) {
+      if (input === fb.key || input.startsWith(fb.key) || (input.length <= 10 && input.includes(fb.key))) {
+        let s = fb.suggestion;
+        if (input.endsWith('代码') && s.startsWith('这段代码')) s = s.substring(4);
+        if (input.endsWith('代码') && s.startsWith('代码')) s = s.substring(2);
+        if (input.endsWith('一下') && s.startsWith('一下')) s = s.substring(2);
+        if (input.endsWith('这个') && s.startsWith('这个')) s = s.substring(2);
         return {
           prefix: input,
-          suggestion: fb.suggestion,
-          fullText: input + fb.suggestion,
+          suggestion: s,
+          fullText: input + s,
           source: 'fallback'
         };
       }
