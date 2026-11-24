@@ -27,11 +27,17 @@ class PredictorService {
   cleanSuggestion(rawSuggestion, prefix) {
     if (!rawSuggestion) return null;
     let s = rawSuggestion.trim();
+    if (!s || s.toUpperCase() === 'NONE' || s.toUpperCase().startsWith('NONE')) return null;
     s = s.replace(/^["'“”‘’`]+|["'“”‘’`]+$/g, '').trim();
     if (s.startsWith(prefix)) {
       s = s.substring(prefix.length).trim();
     }
-    s = s.replace(/^(补全内容[：:]|续写[：:]|建议[：:]|下文[：:]|回答[：:])/g, '').trim();
+    s = s.replace(/^(补全内容[：:]|续写[：:]|建议[：:]|下文[：:]|回答[：:]|提示[：:])/g, '').trim();
+    if (!s || s.toUpperCase() === 'NONE' || s.toUpperCase().startsWith('NONE')) return null;
+    // 助手特征词拦截：如果仍然包含AI助手的反问、解释或回答语气，坚决丢弃，绝不向用户展示回答性内容
+    if (/^(我需要|请提供|请先|请发|好的|你可以|建议你|作为AI|作为一个|请告诉我|请问)/.test(s)) {
+      return null;
+    }
     return s.length > 0 ? s : null;
   }
 
@@ -86,14 +92,17 @@ class PredictorService {
   callGemini(prefix, apiKey, model = 'gemini-2.5-flash', signal) {
     return new Promise((resolve, reject) => {
       const targetModel = model || 'gemini-2.5-flash';
-      const prompt = `用户在代码编辑器的AI对话框正在输入指令，前缀是：
-"${prefix}"
+      const prompt = `你是一个代码编辑器输入框的自动补全引擎。
+【至关重要的原则】
+当前文字是【用户（人类提问者）】正在草拟的内容，不是对你的提问！
+你的任务是站在【用户本人】的视角，继续把用户接下来想说的话写完整。
+【严苛禁令】
+1. 绝对不要以 AI 助手的身份回答、反问或解释（严禁出现“我需要先看到”、“请提供”、“好的”等回答语气）！
+2. 如果用户的提问已经是一个完全独立的完整指令、不需要额外补充时，直接输出：NONE
+3. 续写的内容必须是用户指令的延伸约束（例如“，并给出删除理由”、“，重点分析占用内存大的”），5到15字以内。
+4. 严禁重复前缀，严禁包含任何解释说明、标点引号，直接输出续写纯文本。
 
-请直接续写紧随其后的下半句指令（5到15字左右）。
-严格要求：
-1. 严禁重复前缀！
-2. 严禁包含任何解释说明、问答或引号。
-3. 直接输出续写纯文本。`;
+用户当前未写完的提问内容是："${prefix}"。请站在用户立场续写后续字句：`;
 
       const payload = JSON.stringify({
         contents: [
@@ -255,11 +264,19 @@ class PredictorService {
         messages: [
           {
             role: 'system',
-            content: '你是一个AI代码助手输入框续写引擎。根据用户未写完的指令输入，直接输出后续最自然、高频的补全文字。严禁重复前缀，严禁输出任何解释、说明或标点引号，直接输出纯文本，4-20字以内。'
+            content: `你是一个代码编辑器输入框的自动补全引擎。
+【至关重要的原则】
+当前文字是【用户（人类提问者）】正在草拟的内容，不是对你的提问！
+你的任务是站在【用户本人】的视角，继续把用户接下来想说的话写完整。
+【严苛禁令】
+1. 绝对不要以 AI 助手的身份回答、反问或解释（严禁出现“我需要先看到”、“请提供”、“好的”等回答语气）！
+2. 如果用户的提问已经是一个完全独立的完整指令、不需要额外补充时，直接输出：NONE
+3. 续写的内容必须是用户指令的延伸约束（例如“，并给出删除理由”、“，重点分析占用内存大的”），5到15字以内。
+4. 严禁重复前缀，严禁包含任何解释说明、标点引号，直接输出续写纯文本。`
           },
           {
             role: 'user',
-            content: prefix
+            content: `用户当前未写完的提问内容是："${prefix}"。请站在用户立场续写后续字句：`
           }
         ],
         max_tokens: 35,
