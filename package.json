@@ -2,7 +2,7 @@
   "name": "antigravity-smart-predictor",
   "displayName": "Antigravity 智能输入预测器 (Smart Predictor)",
   "description": "专为 VS Code Antigravity 打造的聊天输入框智能预测与 Ghost Text 幽灵文本补全，支持 Tab 一键采纳与开发意图预判",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "publisher": "antigravity-community",
   "repository": {
     "type": "git",
@@ -25,6 +25,22 @@
   "contributes": {
     "commands": [
       {
+        "command": "antigravity-predictor.menu",
+        "title": "Antigravity 智能预测: 打开设置菜单"
+      },
+      {
+        "command": "antigravity-predictor.setGeminiKey",
+        "title": "Antigravity 智能预测: 配置 Google Gemini API Key"
+      },
+      {
+        "command": "antigravity-predictor.setDeepseekKey",
+        "title": "Antigravity 智能预测: 配置 DeepSeek API Key"
+      },
+      {
+        "command": "antigravity-predictor.switchProvider",
+        "title": "Antigravity 智能预测: 切换 AI 预测通道 (Gemini / DeepSeek)"
+      },
+      {
         "command": "antigravity-predictor.toggle",
         "title": "Antigravity 智能预测: 开关输入预测"
       },
@@ -41,6 +57,32 @@
           "type": "boolean",
           "default": true,
           "description": "是否开启 Antigravity 对话框智能输入预测与 Ghost Text 补全"
+        },
+        "antigravityPredictor.provider": {
+          "type": "string",
+          "enum": ["gemini", "deepseek"],
+          "default": "gemini",
+          "description": "选择 AI 智能预测通道：Google Gemini (推荐，可免费申请) 或 DeepSeek"
+        },
+        "antigravityPredictor.geminiApiKey": {
+          "type": "string",
+          "default": "",
+          "description": "Google Gemini API Key (可从 aistudio.google.com 免费申请)"
+        },
+        "antigravityPredictor.geminiModel": {
+          "type": "string",
+          "default": "gemini-2.0-flash",
+          "description": "Gemini 预测模型，推荐 gemini-2.0-flash 或 gemini-1.5-flash"
+        },
+        "antigravityPredictor.deepseekApiKey": {
+          "type": "string",
+          "default": "",
+          "description": "DeepSeek API Key (可从 platform.deepseek.com 申请)"
+        },
+        "antigravityPredictor.deepseekModel": {
+          "type": "string",
+          "default": "deepseek-chat",
+          "description": "DeepSeek 预测模型，推荐 deepseek-chat"
         },
         "antigravityPredictor.debounceMs": {
           "type": "number",

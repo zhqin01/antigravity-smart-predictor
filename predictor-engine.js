@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const { PredictorService } = require('./predictor-service');
 
 /**
  * 核心意图预置词库与高频编程模板
@@ -96,6 +97,7 @@ const CONTEXT_TEMPLATES = {
 
 class PredictorEngine {
   constructor() {
+    this.service = new PredictorService();
     this.storageDir = path.join(os.homedir(), '.gemini', 'antigravity', 'smart_predictor');
     this.historyFile = path.join(this.storageDir, 'user_habits.json');
     this.userHabits = new Map();
@@ -158,16 +160,51 @@ class PredictorEngine {
   }
 
   /**
-   * 毫秒级多重预测匹配算法
-   * @param {string} rawInput 用户输入框内光标前的文字
-   * @param {object} context 包含 activeFile, languageId 等上下文信息
-   * @returns {object|null} { prefix, suggestion, fullText, score }
+   * 智能预测匹配核心逻辑：优先云端 AI 续写，降级本地意图树
    */
-  predict(rawInput, context = {}) {
+  async predict(rawInput, context = {}, aiConfig = {}) {
     if (!rawInput) return null;
     const input = rawInput.trim();
     if (input.length === 0) return null;
 
+    const hasKey = (aiConfig.provider === 'gemini' && !!aiConfig.geminiApiKey) ||
+                   (aiConfig.provider === 'deepseek' && !!aiConfig.deepseekApiKey);
+
+    // 1. 若配置了 API Key，优先调用云端快速模型（Gemini / DeepSeek）实现全量意图智能预测
+    if (hasKey) {
+      try {
+        const aiSuggestion = await this.service.predictWithAI(input, aiConfig);
+        if (aiSuggestion) {
+          return {
+            prefix: input,
+            suggestion: aiSuggestion,
+            fullText: input + aiSuggestion,
+            source: 'ai-' + aiConfig.provider,
+            provider: aiConfig.provider,
+            hasKey: true
+          };
+        }
+      } catch (e) {}
+    }
+
+    // 2. 本地意图树与用户习惯匹配 (0 延迟毫秒级响应)
+    const localResult = this.predictLocal(input, context);
+    if (localResult) {
+      return {
+        ...localResult,
+        hasKey: !!hasKey
+      };
+    }
+
+    return {
+      prefix: input,
+      suggestion: null,
+      hasKey: !!hasKey,
+      provider: aiConfig.provider || 'gemini'
+    };
+  }
+
+  predictLocal(input, context = {}) {
     const lowerInput = input.toLowerCase();
 
     // 1. 优先度最高：用户历史采纳过的个性化短语 (精确匹配或最长前缀匹配)
