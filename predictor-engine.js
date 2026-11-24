@@ -173,15 +173,15 @@ class PredictorEngine {
     // 0. 本地规则预计算 (0ms)
     const localResult = this.predictLocal(input, context);
 
-    // 若命中个人高频采纳词或完全匹配意图，秒级返回，不消耗云端限额
-    if (localResult && (localResult.source === 'history' || input === localResult.prefix)) {
+    // 0. 若命中个人历史高频采纳词 (用户自己以前按 Tab 确认过的私人习惯)，秒级直接返回
+    if (localResult && localResult.source === 'history') {
       return {
         ...localResult,
         hasKey: !!hasKey
       };
     }
 
-    // 1. 若配置了 Key，调用云端快速模型（Gemini / DeepSeek）
+    // 1. 若配置了 Key，调用云端快速模型（DeepSeek / Gemini）实现真正智能思考续写
     if (hasKey) {
       try {
         const aiSuggestion = await this.service.predictWithAI(input, aiConfig);
