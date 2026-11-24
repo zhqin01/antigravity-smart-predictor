@@ -1,13 +1,26 @@
 const https = require('https');
+const http = require('http');
+const tls = require('tls');
 
 /**
  * 智能输入预测网络服务
- * 支持 Google Gemini API 与 DeepSeek API 极速流式补全
+ * 支持 Google Gemini API (gemini-2.5-flash) 与 DeepSeek API 极速流式补全
+ * 内置 HTTP CONNECT 代理自动穿透，保证国内网络环境下极速秒回
  */
 class PredictorService {
   constructor() {
     this.cache = new Map();
     this.currentAbortController = null;
+  }
+
+  getProxyUrl() {
+    return process.env.HTTPS_PROXY ||
+           process.env.https_proxy ||
+           process.env.HTTP_PROXY ||
+           process.env.http_proxy ||
+           process.env.ALL_PROXY ||
+           process.env.all_proxy ||
+           'http://127.0.0.1:6789';
   }
 
   cleanSuggestion(rawSuggestion, prefix) {
@@ -19,7 +32,7 @@ class PredictorService {
       s = s.substring(prefix.length).trim();
     }
     // 移除 AI 可能会带的多余解释前缀
-    s = s.replace(/^(补全内容[：:]|续写[：:]|建议[：:])/g, '').trim();
+    s = s.replace(/^(补全内容[：:]|续写[：:]|建议[：:]|下文[：:])/g, '').trim();
     return s.length > 0 ? s : null;
   }
 
@@ -68,18 +81,17 @@ class PredictorService {
     }
   }
 
-  callGemini(prefix, apiKey, model = 'gemini-2.0-flash', signal) {
+  callGemini(prefix, apiKey, model = 'gemini-2.5-flash', signal) {
     return new Promise((resolve, reject) => {
-      const targetModel = model || 'gemini-2.0-flash';
-      const prompt = `你是一个AI代码助手输入框的光标续写预测引擎。
-用户正在向AI输入指令，当前光标前的未写完文字是：
+      const targetModel = model || 'gemini-2.5-flash';
+      const prompt = `用户在代码编辑器的AI对话框正在输入指令，前缀是：
 "${prefix}"
 
-请直接给出紧接着该文字后面最自然、最高频的后续补全文字。
-严格约束规则：
-1. 绝对不要重复用户已输入的文字！
-2. 绝对不要包含任何解释、说明、标点引号、Markdown代码块或思考过程。
-3. 直接输出续写的纯文本内容，长度控制在 4 到 25 个汉字以内。`;
+请直接续写紧随其后的完整后续指令（长度5到20字以内）。
+要求：
+1. 绝对不要重复前缀！
+2. 绝对不要输出任何多余的解释、标点引号或问答说明。
+3. 直接输出续写文本。`;
 
       const payload = JSON.stringify({
         contents: [
@@ -88,13 +100,15 @@ class PredictorService {
           }
         ],
         generationConfig: {
-          maxOutputTokens: 35,
-          temperature: 0.2,
-          topP: 0.8
+          maxOutputTokens: 50,
+          temperature: 0.1,
+          thinkingConfig: {
+            thinkingBudget: 0
+          }
         }
       });
 
-      const options = {
+      const requestOptions = {
         hostname: 'generativelanguage.googleapis.com',
         path: `/v1beta/models/${targetModel}:generateContent?key=${apiKey}`,
         method: 'POST',
@@ -102,10 +116,10 @@ class PredictorService {
           'Content-Type': 'application/json',
           'Content-Length': Buffer.byteLength(payload)
         },
-        timeout: 2000
+        timeout: 2500
       };
 
-      const req = https.request(options, (res) => {
+      const handleResponse = (res) => {
         let data = '';
         res.on('data', chunk => data += chunk);
         res.on('end', () => {
@@ -121,24 +135,104 @@ class PredictorService {
             reject(e);
           }
         });
-      });
+      };
 
-      if (signal) {
-        signal.addEventListener('abort', () => {
-          req.destroy(new Error('AbortError'));
-          reject(new Error('AbortError'));
-        });
+      const proxyUrl = this.getProxyUrl();
+      if (proxyUrl) {
+        try {
+          const pUrl = new URL(proxyUrl);
+          const connectReq = http.request({
+            host: pUrl.hostname,
+            port: pUrl.port,
+            method: 'CONNECT',
+            path: 'generativelanguage.googleapis.com:443',
+            timeout: 2500
+          });
+
+          connectReq.on('connect', (res, socket) => {
+            if (res.statusCode === 200) {
+              const tlsSocket = tls.connect({
+                host: 'generativelanguage.googleapis.com',
+                socket: socket,
+                servername: 'generativelanguage.googleapis.com'
+              }, () => {
+                const req = https.request({
+                  ...requestOptions,
+                  createConnection: () => tlsSocket
+                }, handleResponse);
+
+                if (signal) {
+                  signal.addEventListener('abort', () => {
+                    req.destroy(new Error('AbortError'));
+                    reject(new Error('AbortError'));
+                  });
+                }
+                req.on('timeout', () => {
+                  req.destroy();
+                  reject(new Error('Gemini API 请求超时'));
+                });
+                req.on('error', reject);
+                req.write(payload);
+                req.end();
+              });
+              tlsSocket.on('error', reject);
+            } else {
+              this.directGeminiRequest(requestOptions, payload, signal, resolve, reject);
+            }
+          });
+
+          connectReq.on('timeout', () => {
+            connectReq.destroy();
+            this.directGeminiRequest(requestOptions, payload, signal, resolve, reject);
+          });
+          connectReq.on('error', () => {
+            this.directGeminiRequest(requestOptions, payload, signal, resolve, reject);
+          });
+          connectReq.end();
+          return;
+        } catch (e) {
+          // 降级直连
+        }
       }
 
-      req.on('timeout', () => {
-        req.destroy();
-        reject(new Error('Gemini API 请求超时'));
-      });
-
-      req.on('error', reject);
-      req.write(payload);
-      req.end();
+      this.directGeminiRequest(requestOptions, payload, signal, resolve, reject);
     });
+  }
+
+  directGeminiRequest(options, payload, signal, resolve, reject) {
+    const req = https.request(options, (res) => {
+      let data = '';
+      res.on('data', chunk => data += chunk);
+      res.on('end', () => {
+        try {
+          if (res.statusCode >= 200 && res.statusCode < 300) {
+            const json = JSON.parse(data);
+            const text = json.candidates?.[0]?.content?.parts?.[0]?.text;
+            resolve(text || null);
+          } else {
+            reject(new Error(`Gemini API HTTP ${res.statusCode}: ${data.substring(0, 100)}`));
+          }
+        } catch (e) {
+          reject(e);
+        }
+      });
+    });
+
+    if (signal) {
+      signal.addEventListener('abort', () => {
+        req.destroy(new Error('AbortError'));
+        reject(new Error('AbortError'));
+      });
+    }
+
+    req.on('timeout', () => {
+      req.destroy();
+      reject(new Error('Gemini API 请求超时'));
+    });
+
+    req.on('error', reject);
+    req.write(payload);
+    req.end();
   }
 
   callDeepSeek(prefix, apiKey, model = 'deepseek-chat', signal) {
@@ -170,7 +264,7 @@ class PredictorService {
           'Authorization': `Bearer ${apiKey}`,
           'Content-Length': Buffer.byteLength(payload)
         },
-        timeout: 2000
+        timeout: 2500
       };
 
       const req = https.request(options, (res) => {

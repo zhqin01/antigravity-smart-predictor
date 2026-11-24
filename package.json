@@ -71,8 +71,8 @@
         },
         "antigravityPredictor.geminiModel": {
           "type": "string",
-          "default": "gemini-2.0-flash",
-          "description": "Gemini 预测模型，推荐 gemini-2.0-flash 或 gemini-1.5-flash"
+          "default": "gemini-2.5-flash",
+          "description": "Gemini 预测模型，推荐 gemini-2.5-flash 或 gemini-1.5-flash"
         },
         "antigravityPredictor.deepseekApiKey": {
           "type": "string",
