@@ -47,19 +47,22 @@
       return inputEl.value || '';
     }
     const text = inputEl.innerText || inputEl.textContent || '';
-    return text.replace(/\r?\n$/, '');
+    return text
+      .replace(/[\u200b\u200c\u200d\ufeff]/g, '')
+      .replace(/\u00a0/g, ' ')
+      .replace(/\r?\n$/, '');
   }
 
   /**
    * 精确读取光标 (Caret) 在屏幕中的像素坐标与高度
-   * 针对 Meta Lexical 富文本内部文本节点折叠选区深度调优
+   * 采用 3 重级联探针：折叠选区边界 -> 字符探针 -> 零宽字符虚拟探针 -> 容器兜底
    */
   function readCaret(editor) {
     if (!editor) return null;
     const selection = window.getSelection();
     if (!selection || selection.rangeCount === 0) return null;
     const range = selection.getRangeAt(0);
-    if (!range || !range.collapsed) return null;
+    if (!range) return null;
     if (!editor.contains(range.startContainer)) return null;
 
     let rect = range.getBoundingClientRect();
@@ -68,10 +71,11 @@
       if (rects.length > 0) rect = rects[0];
     }
 
-    // 折叠光标在纯文本末尾时，探针探测最后一个字符的右边缘
+    const node = range.startContainer;
+    const offset = range.startOffset;
+
+    // 探针 1: TEXT_NODE 字符探针或 ELEMENT_NODE 最后一个子节点探针
     if ((rect.width === 0 && rect.height === 0) || (rect.top === 0 && rect.left === 0)) {
-      const node = range.startContainer;
-      const offset = range.startOffset;
       if (node && node.nodeType === Node.TEXT_NODE && offset > 0) {
         try {
           const probe = document.createRange();
@@ -82,22 +86,52 @@
             rect = { left: pr.right, top: pr.top, height: pr.height, bottom: pr.bottom };
           }
         } catch (e) {}
+      } else if (node && node.nodeType === Node.ELEMENT_NODE) {
+        const child = node.childNodes[Math.max(0, offset - 1)];
+        if (child) {
+          try {
+            const probe = document.createRange();
+            probe.selectNode(child);
+            const pr = probe.getBoundingClientRect();
+            if (pr.width > 0 || pr.height > 0) {
+              rect = { left: pr.right, top: pr.top, height: pr.height, bottom: pr.bottom };
+            }
+          } catch (e) {}
+        }
       }
     }
 
+    // 探针 2: 零宽 span 物理探针（富文本折行与复杂 DOM 绝不失效）
     if (!rect || (rect.left === 0 && rect.top === 0)) {
-      // 兜底：若仍未探测到且为首行首字，取容器左内边距
-      const edRect = editor.getBoundingClientRect();
-      const style = window.getComputedStyle(editor);
-      const pl = parseFloat(style.paddingLeft) || 12;
-      const pt = parseFloat(style.paddingTop) || 8;
-      rect = { left: edRect.left + pl, top: edRect.top + pt, height: parseFloat(style.lineHeight) || 20 };
+      try {
+        const dummy = document.createElement('span');
+        dummy.textContent = '\u200b';
+        const clone = range.cloneRange();
+        clone.insertNode(dummy);
+        const dummyRect = dummy.getBoundingClientRect();
+        dummy.remove();
+        selection.removeAllRanges();
+        selection.addRange(range);
+        if (dummyRect.left > 0 || dummyRect.top > 0) {
+          rect = { left: dummyRect.left, top: dummyRect.top, height: dummyRect.height };
+        }
+      } catch (e) {}
+    }
+
+    const edRect = editor.getBoundingClientRect();
+    const style = window.getComputedStyle(editor);
+    const pl = parseFloat(style.paddingLeft) || 12;
+    const pt = parseFloat(style.paddingTop) || 8;
+    const lh = parseFloat(style.lineHeight) || 20;
+
+    if (!rect || (rect.left === 0 && rect.top === 0)) {
+      rect = { left: edRect.left + pl, top: edRect.top + pt, height: lh };
     }
 
     return {
       left: rect.left,
       top: rect.top,
-      height: rect.height || 20
+      height: rect.height || lh
     };
   }
 
@@ -154,19 +188,30 @@
     }
 
     const computed = window.getComputedStyle(inputEl);
+    const pl = parseFloat(computed.paddingLeft) || 12;
+    const pr = parseFloat(computed.paddingRight) || 12;
+    const h = caret.height > 0 ? caret.height : (parseFloat(computed.lineHeight) || 20);
+
     const ghost = ensureInlineGhost();
 
-    // 严密计算当前行剩余可用宽度，防止换行溢出
-    const maxW = Math.max(30, editorRect.right - caret.left - 16);
-    if (maxW < 35) {
-      hideGhostText();
-      return;
+    // 智能空间排版：
+    // 若光标右侧剩余宽度充足 (>= 75px)，紧随光标同行显示
+    // 若光标已触及行末 (剩余 < 75px)，自动折行下沉到下一行开头显示，绝不丢弃隐藏！
+    const remainingWidth = editorRect.right - caret.left - pr - 10;
+    let targetLeft, targetTop, maxW;
+
+    if (remainingWidth >= 75) {
+      targetLeft = Math.round(caret.left);
+      targetTop = Math.round(caret.top);
+      maxW = Math.max(75, remainingWidth);
+    } else {
+      targetLeft = Math.round(editorRect.left + pl);
+      targetTop = Math.round(caret.top + h + 2);
+      maxW = Math.max(120, editorRect.width - pl - pr - 16);
     }
 
-    const h = caret.height > 0 ? caret.height : (parseFloat(computed.lineHeight) || 22);
-
-    ghost.style.left = `${Math.round(caret.left)}px`;
-    ghost.style.top = `${Math.round(caret.top)}px`;
+    ghost.style.left = `${targetLeft}px`;
+    ghost.style.top = `${targetTop}px`;
     ghost.style.height = `${Math.round(h)}px`;
     ghost.style.lineHeight = `${Math.round(h)}px`;
     ghost.style.maxWidth = `${Math.round(maxW)}px`;
@@ -218,7 +263,9 @@
       .then(data => {
         if (requestId !== currentRequestId) return;
         const currentText = getInputValue(inputEl).trim();
-        if (currentText !== prefix) return;
+        const currentClean = currentText.replace(/\s+/g, ' ');
+        const prefixClean = prefix.replace(/\s+/g, ' ');
+        if (currentClean !== prefixClean) return;
 
         currentTargetInput = inputEl;
 
@@ -314,10 +361,10 @@
       showGhostText(inputEl, cached);
     }
 
-    // 2. 防抖 260ms 后请求云端或深层匹配
+    // 2. 防抖 180ms 后请求云端或深层匹配，敏捷跟手
     debounceTimer = setTimeout(() => {
       queryPrediction(inputEl);
-    }, 260);
+    }, 180);
   }
 
   function updateGhostPosition() {
@@ -330,7 +377,30 @@
       const ghost = document.getElementById('agy-inline-ghost');
       if (ghost && ghost.style.display !== 'none') {
         const editorRect = currentTargetInput.getBoundingClientRect();
-        const maxW = Math.max(30, editorRect.right - caret.left - 16);
+        const computed = window.getComputedStyle(currentTargetInput);
+        const pl = parseFloat(computed.paddingLeft) || 12;
+        const pr = parseFloat(computed.paddingRight) || 12;
+        const h = caret.height > 0 ? caret.height : (parseFloat(computed.lineHeight) || 20);
+
+        const remainingWidth = editorRect.right - caret.left - pr - 10;
+        let targetLeft, targetTop, maxW;
+
+        if (remainingWidth >= 75) {
+          targetLeft = Math.round(caret.left);
+          targetTop = Math.round(caret.top);
+          maxW = Math.max(75, remainingWidth);
+        } else {
+          targetLeft = Math.round(editorRect.left + pl);
+          targetTop = Math.round(caret.top + h + 2);
+          maxW = Math.max(120, editorRect.width - pl - pr - 16);
+        }
+
+        ghost.style.left = `${targetLeft}px`;
+        ghost.style.top = `${targetTop}px`;
+        ghost.style.maxWidth = `${Math.round(maxW)}px`;
+      }
+    }
+  }
         ghost.style.left = `${Math.round(caret.left)}px`;
         ghost.style.top = `${Math.round(caret.top)}px`;
         ghost.style.maxWidth = `${Math.round(maxW)}px`;

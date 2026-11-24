@@ -2,7 +2,7 @@
   "name": "antigravity-smart-predictor",
   "displayName": "Antigravity 智能输入预测器 (Smart Predictor)",
   "description": "专为 VS Code Antigravity Meta Lexical 富文本聊天框定制的纯正行内幽灵文本补全引擎，光标后紧随显示浅灰色续写文字，按 Tab 键一键采纳",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "publisher": "antigravity-community",
   "repository": {
     "type": "git",
