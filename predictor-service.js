@@ -5,12 +5,13 @@ const tls = require('tls');
 /**
  * 智能输入预测网络服务
  * 支持 Google Gemini API (gemini-2.5-flash) 与 DeepSeek API 极速流式补全
- * 内置 HTTP CONNECT 代理自动穿透，保证国内网络环境下极速秒回
+ * 内置 HTTP CONNECT 代理自动穿透 + 429 频控智能熔断降级
  */
 class PredictorService {
   constructor() {
     this.cache = new Map();
     this.currentAbortController = null;
+    this.rateLimitedUntil = 0;
   }
 
   getProxyUrl() {
@@ -26,13 +27,11 @@ class PredictorService {
   cleanSuggestion(rawSuggestion, prefix) {
     if (!rawSuggestion) return null;
     let s = rawSuggestion.trim();
-    // 去除常见的包裹引号、Markdown与前缀重复
     s = s.replace(/^["'“”‘’`]+|["'“”‘’`]+$/g, '').trim();
     if (s.startsWith(prefix)) {
       s = s.substring(prefix.length).trim();
     }
-    // 移除 AI 可能会带的多余解释前缀
-    s = s.replace(/^(补全内容[：:]|续写[：:]|建议[：:]|下文[：:])/g, '').trim();
+    s = s.replace(/^(补全内容[：:]|续写[：:]|建议[：:]|下文[：:]|回答[：:])/g, '').trim();
     return s.length > 0 ? s : null;
   }
 
@@ -45,7 +44,12 @@ class PredictorService {
       return this.cache.get(cacheKey);
     }
 
-    // 中断上一次仍在途中的请求
+    // 429 频控熔断保护：若正处于限制期，直接返回 null 让引擎降级本地
+    if (provider === 'gemini' && Date.now() < this.rateLimitedUntil) {
+      return null;
+    }
+
+    // 中断上一次在途请求
     if (this.currentAbortController) {
       try {
         this.currentAbortController.abort();
@@ -66,7 +70,6 @@ class PredictorService {
 
       const cleaned = this.cleanSuggestion(suggestion, prefix);
       if (cleaned) {
-        // 缓存最多 100 条
         if (this.cache.size > 100) {
           const firstKey = this.cache.keys().next().value;
           this.cache.delete(firstKey);
@@ -76,7 +79,6 @@ class PredictorService {
       return cleaned;
     } catch (err) {
       if (err.name === 'AbortError') return null;
-      console.warn(`[PredictorService] ${provider} 调用异常:`, err.message);
       return null;
     }
   }
@@ -87,11 +89,11 @@ class PredictorService {
       const prompt = `用户在代码编辑器的AI对话框正在输入指令，前缀是：
 "${prefix}"
 
-请直接续写紧随其后的完整后续指令（长度5到20字以内）。
-要求：
-1. 绝对不要重复前缀！
-2. 绝对不要输出任何多余的解释、标点引号或问答说明。
-3. 直接输出续写文本。`;
+请直接续写紧随其后的下半句指令（5到15字左右）。
+严格要求：
+1. 严禁重复前缀！
+2. 严禁包含任何解释说明、问答或引号。
+3. 直接输出续写纯文本。`;
 
       const payload = JSON.stringify({
         contents: [
@@ -100,7 +102,7 @@ class PredictorService {
           }
         ],
         generationConfig: {
-          maxOutputTokens: 50,
+          maxOutputTokens: 40,
           temperature: 0.1,
           thinkingConfig: {
             thinkingBudget: 0
@@ -116,7 +118,7 @@ class PredictorService {
           'Content-Type': 'application/json',
           'Content-Length': Buffer.byteLength(payload)
         },
-        timeout: 2500
+        timeout: 4500
       };
 
       const handleResponse = (res) => {
@@ -124,15 +126,20 @@ class PredictorService {
         res.on('data', chunk => data += chunk);
         res.on('end', () => {
           try {
+            if (res.statusCode === 429) {
+              this.rateLimitedUntil = Date.now() + 25000; // 冷却 25 秒
+              resolve(null);
+              return;
+            }
             if (res.statusCode >= 200 && res.statusCode < 300) {
               const json = JSON.parse(data);
               const text = json.candidates?.[0]?.content?.parts?.[0]?.text;
               resolve(text || null);
             } else {
-              reject(new Error(`Gemini API HTTP ${res.statusCode}: ${data.substring(0, 100)}`));
+              resolve(null);
             }
           } catch (e) {
-            reject(e);
+            resolve(null);
           }
         });
       };
@@ -146,7 +153,7 @@ class PredictorService {
             port: pUrl.port,
             method: 'CONNECT',
             path: 'generativelanguage.googleapis.com:443',
-            timeout: 2500
+            timeout: 4500
           });
 
           connectReq.on('connect', (res, socket) => {
@@ -164,18 +171,18 @@ class PredictorService {
                 if (signal) {
                   signal.addEventListener('abort', () => {
                     req.destroy(new Error('AbortError'));
-                    reject(new Error('AbortError'));
+                    resolve(null);
                   });
                 }
                 req.on('timeout', () => {
                   req.destroy();
-                  reject(new Error('Gemini API 请求超时'));
+                  resolve(null);
                 });
-                req.on('error', reject);
+                req.on('error', () => resolve(null));
                 req.write(payload);
                 req.end();
               });
-              tlsSocket.on('error', reject);
+              tlsSocket.on('error', () => resolve(null));
             } else {
               this.directGeminiRequest(requestOptions, payload, signal, resolve, reject);
             }
@@ -205,15 +212,20 @@ class PredictorService {
       res.on('data', chunk => data += chunk);
       res.on('end', () => {
         try {
+          if (res.statusCode === 429) {
+            this.rateLimitedUntil = Date.now() + 25000;
+            resolve(null);
+            return;
+          }
           if (res.statusCode >= 200 && res.statusCode < 300) {
             const json = JSON.parse(data);
             const text = json.candidates?.[0]?.content?.parts?.[0]?.text;
             resolve(text || null);
           } else {
-            reject(new Error(`Gemini API HTTP ${res.statusCode}: ${data.substring(0, 100)}`));
+            resolve(null);
           }
         } catch (e) {
-          reject(e);
+          resolve(null);
         }
       });
     });
@@ -221,29 +233,29 @@ class PredictorService {
     if (signal) {
       signal.addEventListener('abort', () => {
         req.destroy(new Error('AbortError'));
-        reject(new Error('AbortError'));
+        resolve(null);
       });
     }
 
     req.on('timeout', () => {
       req.destroy();
-      reject(new Error('Gemini API 请求超时'));
+      resolve(null);
     });
 
-    req.on('error', reject);
+    req.on('error', () => resolve(null));
     req.write(payload);
     req.end();
   }
 
   callDeepSeek(prefix, apiKey, model = 'deepseek-chat', signal) {
-    return new Promise((resolve, reject) => {
+    return new Promise((resolve) => {
       const targetModel = model || 'deepseek-chat';
       const payload = JSON.stringify({
         model: targetModel,
         messages: [
           {
             role: 'system',
-            content: '你是一个AI代码助手输入框续写引擎。根据用户未写完的指令输入，直接输出后续最自然、高频的补全文字。严禁重复前缀，严禁输出任何解释、说明或标点引号，直接输出纯文本，4-25字以内。'
+            content: '你是一个AI代码助手输入框续写引擎。根据用户未写完的指令输入，直接输出后续最自然、高频的补全文字。严禁重复前缀，严禁输出任何解释、说明或标点引号，直接输出纯文本，4-20字以内。'
           },
           {
             role: 'user',
@@ -251,7 +263,7 @@ class PredictorService {
           }
         ],
         max_tokens: 35,
-        temperature: 0.2,
+        temperature: 0.1,
         stream: false
       });
 
@@ -264,7 +276,7 @@ class PredictorService {
           'Authorization': `Bearer ${apiKey}`,
           'Content-Length': Buffer.byteLength(payload)
         },
-        timeout: 2500
+        timeout: 4500
       };
 
       const req = https.request(options, (res) => {
@@ -277,10 +289,10 @@ class PredictorService {
               const text = json.choices?.[0]?.message?.content;
               resolve(text || null);
             } else {
-              reject(new Error(`DeepSeek API HTTP ${res.statusCode}: ${data.substring(0, 100)}`));
+              resolve(null);
             }
           } catch (e) {
-            reject(e);
+            resolve(null);
           }
         });
       });
@@ -288,16 +300,16 @@ class PredictorService {
       if (signal) {
         signal.addEventListener('abort', () => {
           req.destroy(new Error('AbortError'));
-          reject(new Error('AbortError'));
+          resolve(null);
         });
       }
 
       req.on('timeout', () => {
         req.destroy();
-        reject(new Error('DeepSeek API 请求超时'));
+        resolve(null);
       });
 
-      req.on('error', reject);
+      req.on('error', () => resolve(null));
       req.write(payload);
       req.end();
     });

@@ -160,7 +160,7 @@ class PredictorEngine {
   }
 
   /**
-   * 智能预测匹配核心逻辑：优先云端 AI 续写，降级本地意图树
+   * 智能预测匹配核心逻辑：优先云端 AI 续写，强力保障本地意图树与 429 熔断无缝降级
    */
   async predict(rawInput, context = {}, aiConfig = {}) {
     if (!rawInput) return null;
@@ -170,7 +170,18 @@ class PredictorEngine {
     const hasKey = (aiConfig.provider === 'gemini' && !!aiConfig.geminiApiKey) ||
                    (aiConfig.provider === 'deepseek' && !!aiConfig.deepseekApiKey);
 
-    // 1. 若配置了 API Key，优先调用云端快速模型（Gemini / DeepSeek）实现全量意图智能预测
+    // 0. 本地规则预计算 (0ms)
+    const localResult = this.predictLocal(input, context);
+
+    // 若命中个人高频采纳词或完全匹配意图，秒级返回，不消耗云端限额
+    if (localResult && (localResult.source === 'history' || input === localResult.prefix)) {
+      return {
+        ...localResult,
+        hasKey: !!hasKey
+      };
+    }
+
+    // 1. 若配置了 Key，调用云端快速模型（Gemini / DeepSeek）
     if (hasKey) {
       try {
         const aiSuggestion = await this.service.predictWithAI(input, aiConfig);
@@ -187,8 +198,7 @@ class PredictorEngine {
       } catch (e) {}
     }
 
-    // 2. 本地意图树与用户习惯匹配 (0 延迟毫秒级响应)
-    const localResult = this.predictLocal(input, context);
+    // 2. 本地意图树与常见动作兜底（保证即使云端 429 免费配额限制或网络卡顿时，100% 出现灰色续写）
     if (localResult) {
       return {
         ...localResult,

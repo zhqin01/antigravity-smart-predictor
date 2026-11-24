@@ -1,26 +1,26 @@
 /**
- * Antigravity Smart Predictor - Runtime Input Predictor & Ghost Text Overlay (v1.1.0)
- * 专为 VS Code Antigravity 聊天输入框 (Lexical / Textarea / ContentEditable) 打造的高效输入预测与补全引擎
- * 支持浮动候选胶囊 + 幽灵文本双重呈现，Tab ⇥ 或点击一键采纳，支持 Gemini & DeepSeek 双通道
+ * Antigravity Smart Predictor - Inline Ghost Text Engine (v1.2.0)
+ * 专为 VS Code Antigravity Meta Lexical 富文本聊天框定制的纯正行内幽灵文本补全引擎
+ * 抛弃弹窗与浮动胶囊，直接在光标后紧随显示浅灰色续写文字，按 Tab 键一键无缝采纳
  */
-(function initAntigravitySmartPredictor() {
+(function initAntigravityInlinePredictor() {
   'use strict';
 
   let currentTargetInput = null;
   let activeSuggestion = null;
   let debounceTimer = null;
   let isComposing = false;
+  let currentRequestId = 0;
+  const localSuggestionCache = new Map();
 
   const API_PORT = 23948;
 
   /**
-   * 精准解析输入框根节点
-   * Antigravity 使用 Meta Lexical 富文本框架 (div[contenteditable="true"][data-lexical-editor="true"])
-   * 用户打字时事件 target 可能是其内部子 span 或 p，需向上追溯到根可编辑容器
+   * 解析 Antigravity 聊天输入框根节点 (Meta Lexical 容器)
    */
   function getChatInputElement(el) {
     if (!el) return null;
-    if (el.id === 'agy-ghost-overlay' || el.id === 'agy-predictor-chip' || el.closest?.('#agy-context-popover') || el.closest?.('#agy-ghost-overlay') || el.closest?.('#agy-predictor-chip')) {
+    if (el.id === 'agy-inline-ghost' || el.closest?.('#agy-context-popover') || el.closest?.('#agy-inline-ghost')) {
       return null;
     }
     if (el.tagName === 'TEXTAREA' || el.tagName === 'INPUT') {
@@ -46,216 +46,147 @@
     if (inputEl.tagName === 'TEXTAREA' || inputEl.tagName === 'INPUT') {
       return inputEl.value || '';
     }
-    // Lexical / contenteditable：提取整段文本并去除末尾多余换行
     const text = inputEl.innerText || inputEl.textContent || '';
     return text.replace(/\r?\n$/, '');
   }
 
-  function ensureGhostOverlay() {
-    let overlay = document.getElementById('agy-ghost-overlay');
-    if (!overlay) {
-      overlay = document.createElement('div');
-      overlay.id = 'agy-ghost-overlay';
-      overlay.style.position = 'fixed';
-      overlay.style.pointerEvents = 'none';
-      overlay.style.zIndex = '99998';
-      overlay.style.overflow = 'hidden';
-      overlay.style.boxSizing = 'border-box';
-      overlay.style.display = 'none';
-      overlay.style.whiteSpace = 'pre-wrap';
-      overlay.style.wordBreak = 'break-word';
-      overlay.style.overflowWrap = 'break-word';
-      overlay.style.background = 'transparent';
-      document.body.appendChild(overlay);
+  /**
+   * 精确读取光标 (Caret) 在屏幕中的像素坐标与高度
+   * 针对 Meta Lexical 富文本内部文本节点折叠选区深度调优
+   */
+  function readCaret(editor) {
+    if (!editor) return null;
+    const selection = window.getSelection();
+    if (!selection || selection.rangeCount === 0) return null;
+    const range = selection.getRangeAt(0);
+    if (!range || !range.collapsed) return null;
+    if (!editor.contains(range.startContainer)) return null;
+
+    let rect = range.getBoundingClientRect();
+    if (rect.width === 0 && rect.height === 0) {
+      const rects = range.getClientRects();
+      if (rects.length > 0) rect = rects[0];
     }
-    return overlay;
+
+    // 折叠光标在纯文本末尾时，探针探测最后一个字符的右边缘
+    if ((rect.width === 0 && rect.height === 0) || (rect.top === 0 && rect.left === 0)) {
+      const node = range.startContainer;
+      const offset = range.startOffset;
+      if (node && node.nodeType === Node.TEXT_NODE && offset > 0) {
+        try {
+          const probe = document.createRange();
+          probe.setStart(node, offset - 1);
+          probe.setEnd(node, offset);
+          const pr = probe.getBoundingClientRect();
+          if (pr.width > 0 || pr.height > 0) {
+            rect = { left: pr.right, top: pr.top, height: pr.height, bottom: pr.bottom };
+          }
+        } catch (e) {}
+      }
+    }
+
+    if (!rect || (rect.left === 0 && rect.top === 0)) {
+      // 兜底：若仍未探测到且为首行首字，取容器左内边距
+      const edRect = editor.getBoundingClientRect();
+      const style = window.getComputedStyle(editor);
+      const pl = parseFloat(style.paddingLeft) || 12;
+      const pt = parseFloat(style.paddingTop) || 8;
+      rect = { left: edRect.left + pl, top: edRect.top + pt, height: parseFloat(style.lineHeight) || 20 };
+    }
+
+    return {
+      left: rect.left,
+      top: rect.top,
+      height: rect.height || 20
+    };
   }
 
-  function ensureFloatingChip() {
-    let chip = document.getElementById('agy-predictor-chip');
-    if (!chip) {
-      chip = document.createElement('div');
-      chip.id = 'agy-predictor-chip';
-      chip.style.position = 'fixed';
-      chip.style.zIndex = '999999';
-      chip.style.display = 'none';
-      chip.style.cursor = 'pointer';
-      chip.style.userSelect = 'none';
-      chip.style.transition = 'all 0.15s cubic-bezier(0.16, 1, 0.3, 1)';
-      document.body.appendChild(chip);
-
-      chip.addEventListener('click', (e) => {
-        e.stopPropagation();
-        e.preventDefault();
-        if (activeSuggestion && activeSuggestion.isConfigPrompt) {
-          fetch(`http://127.0.0.1:${API_PORT}/action/configure_key`).catch(() => {});
-          hideGhostText();
-          return;
-        }
-        if (currentTargetInput && activeSuggestion) {
-          acceptPrediction(currentTargetInput);
-        }
-      });
-      chip.addEventListener('mouseenter', () => {
-        chip.style.transform = 'translateY(-1px)';
-        chip.style.boxShadow = '0 6px 20px rgba(37, 99, 235, 0.45)';
-      });
-      chip.addEventListener('mouseleave', () => {
-        chip.style.transform = 'translateY(0)';
-        chip.style.boxShadow = '0 4px 16px rgba(0, 0, 0, 0.45)';
-      });
+  function ensureInlineGhost() {
+    let ghost = document.getElementById('agy-inline-ghost');
+    if (!ghost) {
+      ghost = document.createElement('div');
+      ghost.id = 'agy-inline-ghost';
+      ghost.style.position = 'fixed';
+      ghost.style.pointerEvents = 'none';
+      ghost.style.zIndex = '99999';
+      ghost.style.display = 'none';
+      ghost.style.whiteSpace = 'nowrap';
+      ghost.style.overflow = 'hidden';
+      ghost.style.textOverflow = 'ellipsis';
+      ghost.style.userSelect = 'none';
+      ghost.style.boxSizing = 'border-box';
+      document.body.appendChild(ghost);
     }
-    return chip;
-  }
-
-  function syncOverlayPosition(inputEl, overlay) {
-    if (!inputEl || !overlay) return;
-    const rect = inputEl.getBoundingClientRect();
-    const style = window.getComputedStyle(inputEl);
-
-    overlay.style.top = rect.top + 'px';
-    overlay.style.left = rect.left + 'px';
-    overlay.style.width = rect.width + 'px';
-    overlay.style.height = rect.height + 'px';
-
-    overlay.style.fontFamily = style.fontFamily;
-    overlay.style.fontSize = style.fontSize;
-    overlay.style.fontWeight = style.fontWeight;
-    overlay.style.lineHeight = style.lineHeight;
-    overlay.style.letterSpacing = style.letterSpacing;
-    overlay.style.paddingTop = style.paddingTop;
-    overlay.style.paddingRight = style.paddingRight;
-    overlay.style.paddingBottom = style.paddingBottom;
-    overlay.style.paddingLeft = style.paddingLeft;
-    overlay.style.borderTopWidth = style.borderTopWidth;
-    overlay.style.borderLeftWidth = style.borderLeftWidth;
-
-    overlay.scrollTop = inputEl.scrollTop;
-    overlay.scrollLeft = inputEl.scrollLeft;
-  }
-
-  function syncFloatingChipPosition(inputEl, chip) {
-    if (!inputEl || !chip) return;
-    const rect = inputEl.getBoundingClientRect();
-    const windowWidth = document.documentElement.clientWidth || window.innerWidth;
-    const windowHeight = window.innerHeight;
-
-    const chipWidth = chip.offsetWidth || 320;
-    let targetLeft = rect.left;
-    if (targetLeft + chipWidth > windowWidth - 12) {
-      targetLeft = windowWidth - chipWidth - 12;
-    }
-    targetLeft = Math.max(10, targetLeft);
-
-    const bottomOffset = windowHeight - rect.top + 6;
-    chip.style.left = Math.round(targetLeft) + 'px';
-    chip.style.bottom = Math.round(bottomOffset) + 'px';
+    return ghost;
   }
 
   function hideGhostText() {
-    const overlay = document.getElementById('agy-ghost-overlay');
-    if (overlay) {
-      overlay.style.display = 'none';
-      overlay.innerHTML = '';
+    const ghost = document.getElementById('agy-inline-ghost');
+    if (ghost) {
+      ghost.style.display = 'none';
+      ghost.innerHTML = '';
     }
-    const chip = document.getElementById('agy-predictor-chip');
-    if (chip) {
-      chip.style.display = 'none';
-    }
+    // 彻底清理旧版遗留的任何多余悬浮胶囊与遮罩
+    const oldChip = document.getElementById('agy-predictor-chip');
+    if (oldChip) oldChip.remove();
+    const oldOverlay = document.getElementById('agy-ghost-overlay');
+    if (oldOverlay) oldOverlay.remove();
+
     activeSuggestion = null;
   }
 
-  function showGhostText(inputEl, typedText, suggestionText) {
+  function showGhostText(inputEl, suggestionText) {
     if (!inputEl || !suggestionText) {
       hideGhostText();
       return;
     }
 
-    // 1. 渲染输入框正上方浮动候选胶囊 (100% 显眼可见，不被任何样式遮挡)
-    const chip = ensureFloatingChip();
-    chip.style.background = '#181e29';
-    chip.style.border = '1px solid rgba(59, 130, 246, 0.5)';
-    chip.style.borderRadius = '8px';
-    chip.style.padding = '5px 10px';
-    chip.style.color = '#f8fafc';
-    chip.style.fontFamily = '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
-    chip.style.fontSize = '11.5px';
-    chip.style.boxShadow = '0 4px 16px rgba(0, 0, 0, 0.45)';
-    chip.style.display = 'inline-flex';
-    chip.style.alignItems = 'center';
-    chip.style.gap = '7px';
-    chip.style.maxWidth = Math.min(540, (window.innerWidth || 800) - 24) + 'px';
+    const caret = readCaret(inputEl);
+    if (!caret) {
+      hideGhostText();
+      return;
+    }
 
-    chip.innerHTML = `
-      <span style="display: inline-flex; align-items: center; gap: 4px; color: #60a5fa; font-weight: 600; font-size: 11px; flex-shrink: 0;">
-        <span>✨</span>
-        <span>预测</span>
-      </span>
-      <span style="color: #cbd5e1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 400; flex: 1; min-width: 0;">
-        ${escapeHtml(suggestionText)}
-      </span>
-      <span style="display: inline-flex; align-items: center; padding: 1px 6px; font-size: 10px; font-family: monospace; background: rgba(59, 130, 246, 0.22); border: 1px solid rgba(96, 165, 250, 0.4); border-radius: 4px; color: #93c5fd; flex-shrink: 0; line-height: 1.2;">
-        Tab ⇥
-      </span>
+    const editorRect = inputEl.getBoundingClientRect();
+    if (editorRect.width <= 0 || editorRect.height <= 0) {
+      hideGhostText();
+      return;
+    }
+
+    const computed = window.getComputedStyle(inputEl);
+    const ghost = ensureInlineGhost();
+
+    // 严密计算当前行剩余可用宽度，防止换行溢出
+    const maxW = Math.max(30, editorRect.right - caret.left - 16);
+    if (maxW < 35) {
+      hideGhostText();
+      return;
+    }
+
+    const h = caret.height > 0 ? caret.height : (parseFloat(computed.lineHeight) || 22);
+
+    ghost.style.left = `${Math.round(caret.left)}px`;
+    ghost.style.top = `${Math.round(caret.top)}px`;
+    ghost.style.height = `${Math.round(h)}px`;
+    ghost.style.lineHeight = `${Math.round(h)}px`;
+    ghost.style.maxWidth = `${Math.round(maxW)}px`;
+    ghost.style.fontFamily = computed.fontFamily;
+    ghost.style.fontSize = computed.fontSize;
+    ghost.style.fontWeight = computed.fontWeight;
+    ghost.style.letterSpacing = computed.letterSpacing;
+    ghost.style.display = 'inline-flex';
+    ghost.style.alignItems = 'center';
+
+    // 纯正浅灰色行内续写字 + 微型 Tab 徽标
+    ghost.innerHTML = `
+      <span style="color: #8b949e; opacity: 0.85; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${escapeHtml(suggestionText)}</span>
+      <span style="display: inline-flex; align-items: center; margin-left: 6px; font-size: 10px; font-family: -apple-system, BlinkMacSystemFont, monospace; padding: 0 4px; height: 15px; line-height: 14px; border: 1px solid rgba(139, 148, 158, 0.4); border-radius: 3px; color: #8b949e; opacity: 0.7; flex-shrink: 0;">Tab ⇥</span>
     `;
-    chip.style.display = 'inline-flex';
-    syncFloatingChipPosition(inputEl, chip);
-
-    // 2. 尝试渲染输入框内 Ghost Text 幽灵文本覆盖层
-    try {
-      const overlay = ensureGhostOverlay();
-      syncOverlayPosition(inputEl, overlay);
-      overlay.innerHTML = `
-        <span style="color: transparent; opacity: 0; user-select: none;">${escapeHtml(typedText)}</span><span style="color: rgba(148, 163, 184, 0.65); font-style: normal; user-select: none;">${escapeHtml(suggestionText)}</span>
-      `;
-      overlay.style.display = 'block';
-    } catch (e) {}
 
     activeSuggestion = {
-      prefix: typedText,
+      prefix: getInputValue(inputEl),
       suffix: suggestionText,
-      fullText: typedText + suggestionText,
-      isConfigPrompt: false
-    };
-  }
-
-  function showConfigurePromptChip(inputEl, provider) {
-    if (!inputEl) return;
-    const chip = ensureFloatingChip();
-    const providerTitle = provider === 'deepseek' ? 'DeepSeek' : 'Google Gemini';
-
-    chip.style.background = '#1a1f2c';
-    chip.style.border = '1px solid rgba(234, 179, 8, 0.55)';
-    chip.style.borderRadius = '8px';
-    chip.style.padding = '5px 11px';
-    chip.style.color = '#fef08a';
-    chip.style.fontFamily = '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
-    chip.style.fontSize = '11.5px';
-    chip.style.boxShadow = '0 4px 16px rgba(0, 0, 0, 0.5)';
-    chip.style.display = 'inline-flex';
-    chip.style.alignItems = 'center';
-    chip.style.gap = '7px';
-    chip.style.maxWidth = Math.min(540, (window.innerWidth || 800) - 24) + 'px';
-
-    chip.innerHTML = `
-      <span style="display: inline-flex; align-items: center; gap: 4px; color: #facc15; font-weight: 600; font-size: 11px; flex-shrink: 0;">
-        <span>✨</span>
-        <span>智能预测</span>
-      </span>
-      <span style="color: #e2e8f0; font-size: 11px; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
-        点击配置 <strong style="color: #60a5fa;">${providerTitle} Key</strong> 开启 AI 自由预测
-      </span>
-      <span style="display: inline-flex; align-items: center; padding: 2px 7px; font-size: 10.5px; background: #2563eb; border-radius: 4px; color: #ffffff; font-weight: 500; flex-shrink: 0;">
-        去配置 ⚙️
-      </span>
-    `;
-
-    chip.style.display = 'inline-flex';
-    syncFloatingChipPosition(inputEl, chip);
-
-    activeSuggestion = {
-      isConfigPrompt: true,
-      provider: provider
+      fullText: getInputValue(inputEl) + suggestionText
     };
   }
 
@@ -279,31 +210,34 @@
       return;
     }
 
+    const requestId = ++currentRequestId;
     const url = `http://127.0.0.1:${API_PORT}/predict?prefix=${encodeURIComponent(prefix)}`;
 
     fetch(url)
       .then(res => res.json())
       .then(data => {
+        if (requestId !== currentRequestId) return;
         const currentText = getInputValue(inputEl).trim();
         if (currentText !== prefix) return;
 
         currentTargetInput = inputEl;
 
         if (data && data.suggestion) {
-          showGhostText(inputEl, fullText, data.suggestion);
-        } else if (data && data.hasKey === false && prefix.length >= 2) {
-          showConfigurePromptChip(inputEl, data.provider || 'gemini');
+          localSuggestionCache.set(prefix.toLowerCase(), data.suggestion);
+          showGhostText(inputEl, data.suggestion);
         } else {
           hideGhostText();
         }
       })
       .catch(() => {
-        hideGhostText();
+        if (requestId === currentRequestId) {
+          hideGhostText();
+        }
       });
   }
 
   function acceptPrediction(inputEl) {
-    if (!activeSuggestion || !inputEl || activeSuggestion.isConfigPrompt) return;
+    if (!activeSuggestion || !inputEl) return;
     const full = activeSuggestion.fullText;
     const acceptedSuffix = activeSuggestion.suffix;
     const acceptedPrefix = activeSuggestion.prefix;
@@ -324,7 +258,7 @@
       inputEl.dispatchEvent(new Event('change', { bubbles: true }));
       inputEl.selectionStart = inputEl.selectionEnd = full.length;
     } else {
-      // Lexical / contenteditable 处理：
+      // Meta Lexical 富文本插入：
       try {
         const sel = window.getSelection();
         const range = document.createRange();
@@ -334,7 +268,6 @@
         sel.addRange(range);
       } catch (e) {}
 
-      // 通过 document.execCommand 插入，与 Lexical 核心编辑状态完美融合
       let inserted = false;
       try {
         inserted = document.execCommand('insertText', false, acceptedSuffix);
@@ -355,7 +288,7 @@
 
     hideGhostText();
 
-    // 上报采纳习惯
+    // 记录个性化采纳习惯
     try {
       fetch(`http://127.0.0.1:${API_PORT}/record_accepted`, {
         method: 'POST',
@@ -365,15 +298,47 @@
     } catch (e) {}
   }
 
-  function handleInputDebounced(inputEl) {
+  function handleInput(inputEl) {
+    currentTargetInput = inputEl;
     hideGhostText();
+
     if (debounceTimer) clearTimeout(debounceTimer);
+
+    const text = getInputValue(inputEl);
+    const prefix = text.trim();
+    if (prefix.length === 0) return;
+
+    // 1. 本地缓存秒级预览 (0ms)
+    const cached = localSuggestionCache.get(prefix.toLowerCase());
+    if (cached) {
+      showGhostText(inputEl, cached);
+    }
+
+    // 2. 防抖 260ms 后请求云端或深层匹配
     debounceTimer = setTimeout(() => {
       queryPrediction(inputEl);
-    }, 280);
+    }, 260);
   }
 
-  // ================= 全局事件捕获与委托机制 =================
+  function updateGhostPosition() {
+    if (activeSuggestion && currentTargetInput) {
+      const caret = readCaret(currentTargetInput);
+      if (!caret) {
+        hideGhostText();
+        return;
+      }
+      const ghost = document.getElementById('agy-inline-ghost');
+      if (ghost && ghost.style.display !== 'none') {
+        const editorRect = currentTargetInput.getBoundingClientRect();
+        const maxW = Math.max(30, editorRect.right - caret.left - 16);
+        ghost.style.left = `${Math.round(caret.left)}px`;
+        ghost.style.top = `${Math.round(caret.top)}px`;
+        ghost.style.maxWidth = `${Math.round(maxW)}px`;
+      }
+    }
+  }
+
+  // ================= 全局事件捕获与委托 =================
 
   document.addEventListener('compositionstart', (e) => {
     const inputEl = getChatInputElement(e.target);
@@ -388,7 +353,7 @@
     if (inputEl) {
       isComposing = false;
       currentTargetInput = inputEl;
-      handleInputDebounced(inputEl);
+      handleInput(inputEl);
     }
   }, true);
 
@@ -397,7 +362,7 @@
     if (inputEl) {
       currentTargetInput = inputEl;
       if (!isComposing) {
-        handleInputDebounced(inputEl);
+        handleInput(inputEl);
       }
     }
   }, true);
@@ -407,12 +372,7 @@
       if (e.key === 'Tab') {
         e.preventDefault();
         e.stopPropagation();
-        if (activeSuggestion.isConfigPrompt) {
-          fetch(`http://127.0.0.1:${API_PORT}/action/configure_key`).catch(() => {});
-          hideGhostText();
-        } else {
-          acceptPrediction(currentTargetInput);
-        }
+        acceptPrediction(currentTargetInput);
         return;
       }
 
@@ -423,15 +383,16 @@
         return;
       }
 
-      if (e.key === 'ArrowRight' && !activeSuggestion.isConfigPrompt) {
-        const cursor = (currentTargetInput.tagName === 'TEXTAREA' || currentTargetInput.tagName === 'INPUT')
-          ? currentTargetInput.selectionStart
-          : getInputValue(currentTargetInput).length;
-        if (cursor >= getInputValue(currentTargetInput).length) {
-          e.preventDefault();
-          e.stopPropagation();
-          acceptPrediction(currentTargetInput);
-          return;
+      if (e.key === 'ArrowRight') {
+        const sel = window.getSelection();
+        if (sel && sel.rangeCount > 0) {
+          const r = sel.getRangeAt(0);
+          if (r.collapsed && r.startOffset >= (r.startContainer.length || 0)) {
+            e.preventDefault();
+            e.stopPropagation();
+            acceptPrediction(currentTargetInput);
+            return;
+          }
         }
       }
 
@@ -441,30 +402,20 @@
     }
   }, true);
 
-  document.addEventListener('scroll', (e) => {
+  document.addEventListener('selectionchange', () => {
     if (currentTargetInput && activeSuggestion) {
-      const chip = document.getElementById('agy-predictor-chip');
-      if (chip) syncFloatingChipPosition(currentTargetInput, chip);
-      const overlay = document.getElementById('agy-ghost-overlay');
-      if (overlay) syncOverlayPosition(currentTargetInput, overlay);
-    }
-  }, true);
-
-  window.addEventListener('resize', () => {
-    if (currentTargetInput && activeSuggestion) {
-      const chip = document.getElementById('agy-predictor-chip');
-      if (chip) syncFloatingChipPosition(currentTargetInput, chip);
-      const overlay = document.getElementById('agy-ghost-overlay');
-      if (overlay) syncOverlayPosition(currentTargetInput, overlay);
+      updateGhostPosition();
     }
   });
 
+  document.addEventListener('scroll', updateGhostPosition, true);
+  window.addEventListener('resize', updateGhostPosition);
+
   document.addEventListener('click', (e) => {
-    const chip = document.getElementById('agy-predictor-chip');
-    if (activeSuggestion && (!chip || !chip.contains(e.target)) && (!currentTargetInput || !currentTargetInput.contains(e.target))) {
+    if (activeSuggestion && (!currentTargetInput || !currentTargetInput.contains(e.target))) {
       hideGhostText();
     }
   });
 
-  console.log('[Antigravity Smart Predictor] 全局智能预测引擎 v1.1.0 已激活 (端口: ' + API_PORT + ')');
+  console.log('[Antigravity Inline Predictor] 行内纯正 Ghost Text 补全引擎已激活 (端口: ' + API_PORT + ')');
 })();
